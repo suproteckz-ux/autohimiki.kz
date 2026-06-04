@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+    html { scroll-behavior: smooth; }
+    body { @apply font-sans text-gray-800 bg-white; }
+}
+
+@layer components {
+    .btn-whatsapp {
+        @apply inline-flex items-center gap-2 bg-green-500 hover:bg-green-600
+               text-white font-semibold px-6 py-3 rounded-xl transition-colors duration-200;
+    }
+    .btn-primary {
+        @apply inline-flex items-center gap-2 bg-primary-500 hover:bg-primary-600
+               text-white font-semibold px-6 py-3 rounded-xl transition-colors duration-200;
+    }
+    .product-card {
+        @apply bg-white rounded-2xl shadow-sm hover:shadow-md transition-shadow
+               duration-200 overflow-hidden border border-gray-100;
+    }
+    .badge { @apply inline-block text-xs font-semibold px-2 py-0.5 rounded-full; }
+    .badge-new  { @apply bg-blue-100 text-blue-700; }
+    .badge-hit  { @apply bg-red-100 text-red-700; }
+    .badge-sale { @apply bg-primary-100 text-primary-700; }
+}
