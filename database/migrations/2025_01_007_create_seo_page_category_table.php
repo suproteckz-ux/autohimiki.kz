@@ -1,10 +1,26 @@
 <?php
-// Полный код этой миграции — в Этапе 3 документации проекта
-// Файл: database/migrations/2025_01_007_create_seo_page_category_table.php
+
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
-return new class extends Migration {
-    public function up(): void { /* см. этап 3 */ }
-    public function down(): void { /* см. этап 3 */ }
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('seo_page_category', function (Blueprint $table) {
+            $table->foreignId('seo_page_id')
+                  ->constrained('seo_pages')
+                  ->cascadeOnDelete();
+            $table->foreignId('category_id')
+                  ->constrained('categories')
+                  ->cascadeOnDelete();
+            $table->primary(['seo_page_id', 'category_id']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('seo_page_category');
+    }
 };
