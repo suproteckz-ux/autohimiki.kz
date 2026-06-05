@@ -5,13 +5,10 @@ namespace App\Filament\Pages;
 use App\Exports\ProductsExport;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
-use Maatwebsite\Excel\Facades\Excel;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
- * ExportPage
- *
- * Страница экспорта товаров в XLSX.
+ * ExportPage — страница экспорта товаров в Excel.
+ * Использует ProductsExport → FastExcel → XLSX без ext-gd.
  */
 class ExportPage extends Page
 {
@@ -25,21 +22,15 @@ class ExportPage extends Page
 
     public bool $activeOnly = true;
 
-    /**
-     * Скачивает Excel-файл с товарами.
-     */
-    public function exportProducts(): BinaryFileResponse
+    public function exportProducts(): \Symfony\Component\HttpFoundation\StreamedResponse
     {
         $filename = 'products_' . now()->format('Y-m-d_H-i') . '.xlsx';
 
         Notification::make()
-            ->title('Файл экспорта формируется...')
+            ->title('Файл формируется...')
             ->success()
             ->send();
 
-        return Excel::download(
-            new ProductsExport($this->activeOnly),
-            $filename
-        );
+        return (new ProductsExport($this->activeOnly))->download($filename);
     }
 }
