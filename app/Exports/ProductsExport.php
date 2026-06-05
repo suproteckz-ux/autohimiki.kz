@@ -3,39 +3,49 @@
 namespace App\Exports;
 
 use App\Models\Product;
+use Rap2hpoutre\FastExcel\FastExcel;
 use Illuminate\Support\Collection;
-use Maatwebsite\Excel\Concerns\FromCollection;
-use Maatwebsite\Excel\Concerns\ShouldAutoSize;
-use Maatwebsite\Excel\Concerns\WithHeadings;
-use Maatwebsite\Excel\Concerns\WithMapping;
-use Maatwebsite\Excel\Concerns\WithStyles;
-use Maatwebsite\Excel\Concerns\WithTitle;
-use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 /**
  * ProductsExport
  *
- * Экспортирует все активные товары в XLSX.
+ * Экспортирует товары в XLSX-файл.
+ *
+ * ИЗМЕНЕНИЕ: заменён maatwebsite/excel на rap2hpoutre/fast-excel.
+ * FastExcel не требует ext-gd, использует openspout для записи XLSX.
+ *
  * Поля: SKU, название, бренд, категория, цена, остаток, наличие, URL.
  */
-class ProductsExport implements
-    FromCollection,
-    WithHeadings,
-    WithMapping,
-    ShouldAutoSize,
-    WithStyles,
-    WithTitle
+class ProductsExport
 {
     public function __construct(
         private readonly bool $activeOnly = true
     ) {}
 
-    public function title(): string
+    /**
+     * Генерирует XLSX и возвращает путь к временному файлу.
+     * Вызывающий код отдаёт файл через response()->download().
+     */
+    public function download(string $filename): \Symfony\Component\HttpFoundation\StreamedResponse
     {
-        return 'Товары';
+        $rows = $this->buildRows();
+
+        return (new FastExcel($rows))->download($filename);
     }
 
-    public function collection(): Collection
+    /**
+     * Сохраняет XLSX в указанный путь (для тестов и фоновых задач).
+     */
+    public function store(string $path): void
+    {
+        $rows = $this->buildRows();
+        (new FastExcel($rows))->export($path);
+    }
+
+    /**
+     * Формирует коллекцию строк для экспорта.
+     */
+    private function buildRows(): Collection
     {
         $query = Product::with(['brand:id,name', 'category:id,name'])
             ->orderBy('category_id')
@@ -45,56 +55,19 @@ class ProductsExport implements
             $query->active();
         }
 
-        return $query->get([
-            'id', 'sku', 'name', 'brand_id', 'category_id',
-            'price', 'old_price', 'quantity', 'in_stock', 'slug',
-        ]);
-    }
-
-    public function headings(): array
-    {
-        return [
-            'SKU (Артикул)',
-            'Название',
-            'Бренд',
-            'Категория',
-            'Цена (тг)',
-            'Старая цена (тг)',
-            'Остаток',
-            'В наличии',
-            'URL',
-        ];
-    }
-
-    /**
-     * @param  Product $product
-     */
-    public function map($product): array
-    {
-        return [
-            $product->sku,
-            $product->name,
-            $product->brand?->name ?? '',
-            $product->category?->name ?? '',
-            $product->price,
-            $product->old_price ?? '',
-            $product->quantity,
-            $product->in_stock ? 'Да' : 'Нет',
-            url("/product/{$product->slug}"),
-        ];
-    }
-
-    public function styles(Worksheet $sheet): array
-    {
-        return [
-            // Жирный заголовок
-            1 => [
-                'font' => ['bold' => true, 'size' => 11],
-                'fill' => [
-                    'fillType'   => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                    'startColor' => ['argb' => 'FFF59E0B'], // primary-500
-                ],
-            ],
-        ];
+        return $query
+            ->get(['id', 'sku', 'name', 'brand_id', 'category_id',
+                   'price', 'old_price', 'quantity', 'in_stock', 'slug'])
+            ->map(fn (Product $p) => [
+                'SKU (Артикул)'   => $p->sku,
+                'Название'        => $p->name,
+                'Бренд'           => $p->brand?->name ?? '',
+                'Категория'       => $p->category?->name ?? '',
+                'Цена (тг)'       => $p->price,
+                'Старая цена (тг)'=> $p->old_price ?? '',
+                'Остаток'         => $p->quantity,
+                'В наличии'       => $p->in_stock ? 'Да' : 'Нет',
+                'URL'             => url("/product/{$p->slug}"),
+            ]);
     }
 }
