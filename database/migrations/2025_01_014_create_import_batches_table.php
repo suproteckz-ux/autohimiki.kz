@@ -26,10 +26,7 @@ return new class extends Migration
             $table->unsignedInteger('not_found_count')->default(0);
             $table->enum('status', ['pending', 'processing', 'done', 'failed'])
                   ->default('pending');
-            $table->foreignId('user_id')
-                  ->nullable()
-                  ->constrained('users')
-                  ->nullOnDelete();
+            $table->unsignedBigInteger('user_id')->nullable()->index();
             $table->timestamp('started_at')->nullable();
             $table->timestamp('finished_at')->nullable();
             $table->timestamps();
