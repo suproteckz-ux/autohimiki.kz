@@ -1,0 +1,15 @@
+#!/bin/bash
+# artisan83 — запускает artisan через правильный PHP 8.3
+# Использование: bash artisan83 migrate
+#               bash artisan83 db:seed
+#               bash artisan83 make:filament-user
+
+PHP83="/opt/alt/php83/usr/bin/php"
+
+if [ ! -f "$PHP83" ]; then
+    echo "❌ PHP 8.3 не найден по пути: $PHP83"
+    echo "   Попробуйте: find /opt/alt -name 'php' -type f 2>/dev/null"
+    exit 1
+fi
+
+exec "$PHP83" artisan "$@"
