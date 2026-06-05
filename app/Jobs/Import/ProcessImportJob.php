@@ -16,20 +16,18 @@ use Illuminate\Support\Facades\Log;
 /**
  * ProcessImportJob
  *
- * Точка входа для импорта. Получает batch-запись,
- * читает файл, разбивает на чанки по 100 строк,
- * диспатчит ImportChunkJob для каждого чанка.
+ * Читает файл чанками по 100 строк и диспатчит ImportChunkJob.
  *
- * Обновляет прогресс в Cache для отображения в UI.
+ * Использует ImportFileParser → FastExcel (без ext-gd).
  */
 class ProcessImportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries   = 1;    // Без повторов — пользователь запускает заново
-    public int $timeout = 120;  // 2 минуты на разбивку файла
+    public int $tries   = 1;
+    public int $timeout = 300;
 
-    private const CHUNK_SIZE = 100; // Строк в одном чанке
+    private const CHUNK_SIZE = 100;
 
     public function __construct(
         public readonly int $batchId
@@ -39,49 +37,48 @@ class ProcessImportJob implements ShouldQueue
     {
         $batch = ImportBatch::findOrFail($this->batchId);
 
-        Log::info("Import #{$this->batchId} started", [
-            'type' => $batch->type,
-            'file' => $batch->filename,
-        ]);
+        // Проверка на параллельный запуск
+        $lock = Cache::lock('import_running', 600);
+        if (! $lock->get()) {
+            $this->release(300);
+            Log::info("Import #{$this->batchId}: отложен, другой импорт выполняется");
+            return;
+        }
 
         try {
-            // Обновляем статус
-            $batch->update([
-                'status'     => 'processing',
-                'started_at' => now(),
-            ]);
+            $batch->update(['status' => 'processing', 'started_at' => now()]);
 
-            // Парсим файл
+            // Парсим файл (FastExcel — без ext-gd)
             $rows = $parser->parse($batch->filepath);
 
             if (empty($rows)) {
-                $batch->update([
-                    'status'      => 'failed',
-                    'finished_at' => now(),
-                ]);
-                Log::warning("Import #{$this->batchId}: файл пустой или не удалось прочитать");
+                $batch->update(['status' => 'failed', 'finished_at' => now()]);
+                Log::warning("Import #{$this->batchId}: файл пустой");
                 return;
             }
 
-            // Применяем маппинг колонок
+            // Маппинг колонок
             $columnMap = $batch->column_map ?? [];
             if (empty($columnMap)) {
-                // Авто-определение маппинга
-                $fileColumns = ! empty($rows) ? array_keys($rows[0]) : [];
+                $fileColumns = array_keys($rows[0]);
                 $columnMap   = $mapper->autoDetect($fileColumns, $batch->type);
                 $batch->update(['column_map' => $columnMap]);
             }
 
-            $mappedRows = $mapper->map($rows, $columnMap);
+            $mappedRows  = $mapper->map($rows, $columnMap);
 
-            // Обновляем total_rows
+            // Дедупликация SKU
+            $mappedRows  = $this->deduplicateBySkus($mappedRows);
+
             $totalRows   = count($mappedRows);
             $chunks      = array_chunk($mappedRows, self::CHUNK_SIZE);
             $totalChunks = count($chunks);
 
-            $batch->update(['total_rows' => $totalRows]);
+            $batch->update([
+                'total_rows'   => $totalRows,
+                'total_chunks' => $totalChunks,
+            ]);
 
-            // Инициализируем прогресс в кэше
             Cache::put($batch->progressCacheKey(), [
                 'total'     => $totalChunks,
                 'processed' => 0,
@@ -89,54 +86,53 @@ class ProcessImportJob implements ShouldQueue
                 'status'    => 'processing',
             ], 7200);
 
-            Log::info("Import #{$this->batchId}: {$totalRows} строк → {$totalChunks} чанков");
-
-            // Диспатчим чанки с задержкой, чтобы не перегружать очередь
-            foreach ($chunks as $chunkIndex => $chunk) {
+            foreach ($chunks as $index => $chunk) {
                 ImportChunkJob::dispatch(
                     batchId:    $this->batchId,
                     chunk:      $chunk,
-                    chunkIndex: $chunkIndex,
+                    chunkIndex: $index,
                     totalChunks: $totalChunks
-                )
-                ->onQueue('imports')
-                ->delay(now()->addSeconds($chunkIndex)); // 1 сек между чанками
+                )->onQueue('imports');
             }
 
-            // FinalizeImportJob запускается после всех чанков
             FinalizeImportJob::dispatch($this->batchId)
                 ->onQueue('imports-low')
                 ->delay(now()->addSeconds($totalChunks + 10));
 
         } catch (\Throwable $e) {
-            $batch->update([
-                'status'      => 'failed',
-                'finished_at' => now(),
-            ]);
-
-            Cache::put($batch->progressCacheKey(), [
-                'status' => 'failed',
-                'error'  => $e->getMessage(),
-            ], 3600);
-
-            Log::error("Import #{$this->batchId} failed", [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
+            $batch->update(['status' => 'failed', 'finished_at' => now()]);
+            Cache::put($batch->progressCacheKey(), ['status' => 'failed', 'error' => $e->getMessage()], 3600);
+            Log::error("Import #{$this->batchId} failed", ['error' => $e->getMessage()]);
             throw $e;
+        } finally {
+            $lock->release();
         }
+    }
+
+    private function deduplicateBySkus(array $rows): array
+    {
+        $seen  = [];
+        $dupes = 0;
+
+        foreach ($rows as $row) {
+            $sku = trim($row['sku'] ?? '');
+            if ($sku) {
+                $seen[$sku] = $row; // последнее вхождение побеждает
+            } else {
+                $seen[] = $row; // строки без SKU добавляем как есть
+            }
+        }
+
+        if ($dupes > 0) {
+            Log::warning("Import #{$this->batchId}: обнаружено {$dupes} дублирующихся SKU");
+        }
+
+        return array_values($seen);
     }
 
     public function failed(\Throwable $e): void
     {
-        ImportBatch::where('id', $this->batchId)->update([
-            'status'      => 'failed',
-            'finished_at' => now(),
-        ]);
-
-        Log::error("ProcessImportJob #{$this->batchId} failed permanently", [
-            'error' => $e->getMessage(),
-        ]);
+        ImportBatch::where('id', $this->batchId)
+            ->update(['status' => 'failed', 'finished_at' => now()]);
     }
 }
