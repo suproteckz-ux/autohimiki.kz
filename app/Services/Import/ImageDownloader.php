@@ -8,31 +8,27 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Intervention\Image\Laravel\Facades\Image;
 
 /**
  * ImageDownloader
  *
  * Скачивает изображение по URL, сохраняет оригинал,
- * конвертирует в WebP и создаёт запись product_images.
+ * и по возможности конвертирует в WebP.
  *
- * Если изображение уже существует (сравниваем по URL/имени) — не дублирует.
+ * ИЗМЕНЕНИЕ: WebP-конвертация теперь graceful-degradation:
+ * - Если доступен Imagick → конвертируем в WebP через Imagick
+ * - Если доступен GD     → конвертируем в WebP через GD
+ * - Если ни один не доступен → сохраняем только оригинал, WebP не создаём
+ * Это позволяет работать на shared-хостинге без ext-gd в CLI.
  */
 class ImageDownloader
 {
-    private const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
-    private const TIMEOUT        = 30;                // секунд
-    private const WEBP_QUALITY   = 85;
-    private const MAX_DIMENSION  = 1200;              // px (ширина/высота)
+    private const CONNECT_TIMEOUT = 5;
+    private const READ_TIMEOUT    = 20;
+    private const MAX_SIZE_BYTES  = 10 * 1024 * 1024; // 10 MB
+    private const WEBP_QUALITY    = 85;
+    private const MAX_DIMENSION   = 1200;
 
-    /**
-     * Скачивает и сохраняет изображение для товара.
-     *
-     * @param  int    $productId
-     * @param  string $imageUrl
-     * @param  bool   $setAsMain  Установить как главное изображение
-     * @return bool   Успешно ли
-     */
     public function download(int $productId, string $imageUrl, bool $setAsMain = false): bool
     {
         $product = Product::find($productId);
@@ -41,54 +37,69 @@ class ImageDownloader
             return false;
         }
 
+        // Валидация URL
+        if (! filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+            Log::warning("ImageDownloader: невалидный URL", ['url' => $imageUrl]);
+            return false;
+        }
+
+        // SSRF-защита
+        $host = parse_url($imageUrl, PHP_URL_HOST);
+        if ($host && $this->isInternalHost($host)) {
+            Log::warning("ImageDownloader: заблокирован внутренний адрес", ['host' => $host]);
+            return false;
+        }
+
         try {
-            // Скачиваем файл
-            $response = Http::timeout(self::TIMEOUT)
+            // HEAD-запрос для быстрой проверки
+            $head = Http::timeout(self::CONNECT_TIMEOUT)->head($imageUrl);
+            if (! $head->successful()) {
+                Log::warning("ImageDownloader: URL недоступен (HEAD {$head->status()})", ['url' => $imageUrl]);
+                return false;
+            }
+
+            // Скачиваем
+            $response = Http::connectTimeout(self::CONNECT_TIMEOUT)
+                ->timeout(self::READ_TIMEOUT)
                 ->withHeaders(['User-Agent' => 'Autohimiki-Import/1.0'])
                 ->get($imageUrl);
 
             if (! $response->successful()) {
-                Log::warning("ImageDownloader: не удалось скачать {$imageUrl}", [
-                    'status' => $response->status(),
-                ]);
                 return false;
             }
 
-            // Проверяем размер
             $content = $response->body();
+
             if (strlen($content) > self::MAX_SIZE_BYTES) {
-                Log::warning("ImageDownloader: файл слишком большой ({$imageUrl})");
+                Log::warning("ImageDownloader: файл слишком большой", ['url' => $imageUrl]);
+                return false;
+            }
+
+            if (! $this->isValidImageContent($content)) {
+                Log::warning("ImageDownloader: контент не является изображением", ['url' => $imageUrl]);
                 return false;
             }
 
             // Определяем расширение
             $contentType = $response->header('Content-Type') ?? 'image/jpeg';
-            $extension   = $this->extensionFromMime($contentType);
+            $extension   = $this->extensionFromMime($contentType) ?? 'jpg';
 
-            if (! $extension) {
-                Log::warning("ImageDownloader: неизвестный MIME-тип {$contentType}");
-                return false;
-            }
-
-            // Генерируем имена файлов
-            $baseName  = Str::uuid()->toString();
-            $origPath  = "products/{$baseName}.{$extension}";
-            $webpPath  = "products/{$baseName}.webp";
+            $baseName = Str::uuid()->toString();
+            $origPath = "products/{$baseName}.{$extension}";
 
             // Сохраняем оригинал
             Storage::disk('public')->put($origPath, $content);
 
-            // Конвертируем в WebP
-            $this->convertToWebP(
+            // Пробуем создать WebP (graceful — если нет нужного расширения, не падаем)
+            $webpPath = $this->tryConvertToWebP(
                 Storage::disk('public')->path($origPath),
-                Storage::disk('public')->path($webpPath)
+                "products/{$baseName}.webp"
             );
 
-            // Определяем sort_order (максимальный + 1)
+            // Запись в БД
             $sortOrder = ProductImage::where('product_id', $productId)->max('sort_order') + 1;
 
-            // Создаём запись галереи
-            $productImage = ProductImage::create([
+            ProductImage::create([
                 'product_id' => $productId,
                 'path'       => $origPath,
                 'path_webp'  => $webpPath,
@@ -96,7 +107,7 @@ class ImageDownloader
                 'sort_order' => $sortOrder,
             ]);
 
-            // Устанавливаем как главное если нужно или у товара нет изображения
+            // Главное изображение
             if ($setAsMain || empty($product->main_image)) {
                 Product::where('id', $productId)->update([
                     'main_image'      => $origPath,
@@ -105,40 +116,102 @@ class ImageDownloader
                 ]);
             }
 
-            Log::info("ImageDownloader: изображение сохранено для товара #{$productId}", [
-                'url'  => $imageUrl,
-                'path' => $origPath,
-            ]);
-
             return true;
 
         } catch (\Throwable $e) {
-            Log::error("ImageDownloader: ошибка для товара #{$productId}", [
-                'url'   => $imageUrl,
-                'error' => $e->getMessage(),
+            Log::error("ImageDownloader: ошибка", [
+                'product_id' => $productId,
+                'url'        => $imageUrl,
+                'error'      => $e->getMessage(),
             ]);
             return false;
         }
     }
 
     /**
-     * Конвертирует изображение в WebP.
+     * Пытается конвертировать изображение в WebP.
+     * Возвращает путь к WebP-файлу или null если конвертация невозможна.
+     *
+     * Порядок попытки: Imagick → GD → null (не конвертируем).
      */
-    private function convertToWebP(string $sourcePath, string $targetPath): void
+    private function tryConvertToWebP(string $sourcePath, string $targetStoragePath): ?string
     {
-        $image = Image::read($sourcePath);
+        $targetPath = Storage::disk('public')->path($targetStoragePath);
 
-        // Уменьшаем если слишком большое
-        if ($image->width() > self::MAX_DIMENSION || $image->height() > self::MAX_DIMENSION) {
-            $image->scaleDown(self::MAX_DIMENSION, self::MAX_DIMENSION);
+        // Попытка 1: Imagick (доступен на большинстве хостингов)
+        if (extension_loaded('imagick')) {
+            try {
+                $imagick = new \Imagick($sourcePath);
+                $imagick->setImageFormat('webp');
+                $imagick->setImageCompressionQuality(self::WEBP_QUALITY);
+
+                // Уменьшаем если слишком большое
+                $w = $imagick->getImageWidth();
+                $h = $imagick->getImageHeight();
+                if ($w > self::MAX_DIMENSION || $h > self::MAX_DIMENSION) {
+                    $imagick->scaleImage(self::MAX_DIMENSION, self::MAX_DIMENSION, true);
+                }
+
+                $imagick->writeImage($targetPath);
+                $imagick->destroy();
+
+                return $targetStoragePath;
+            } catch (\Throwable $e) {
+                Log::warning("ImageDownloader: Imagick WebP failed", ['error' => $e->getMessage()]);
+            }
         }
 
-        $image->toWebp(self::WEBP_QUALITY)->save($targetPath);
+        // Попытка 2: GD
+        if (extension_loaded('gd') && function_exists('imagewebp')) {
+            try {
+                $info = getimagesize($sourcePath);
+                if (! $info) return null;
+
+                $src = match ($info[2]) {
+                    IMAGETYPE_JPEG => imagecreatefromjpeg($sourcePath),
+                    IMAGETYPE_PNG  => imagecreatefrompng($sourcePath),
+                    IMAGETYPE_WEBP => imagecreatefromwebp($sourcePath),
+                    default        => null,
+                };
+
+                if (! $src) return null;
+
+                $w = imagesx($src);
+                $h = imagesy($src);
+
+                if ($w > self::MAX_DIMENSION || $h > self::MAX_DIMENSION) {
+                    $ratio  = min(self::MAX_DIMENSION / $w, self::MAX_DIMENSION / $h);
+                    $newW   = (int) ($w * $ratio);
+                    $newH   = (int) ($h * $ratio);
+                    $resized = imagecreatetruecolor($newW, $newH);
+                    imagecopyresampled($resized, $src, 0, 0, 0, 0, $newW, $newH, $w, $h);
+                    imagedestroy($src);
+                    $src = $resized;
+                }
+
+                imagewebp($src, $targetPath, self::WEBP_QUALITY);
+                imagedestroy($src);
+
+                return $targetStoragePath;
+            } catch (\Throwable $e) {
+                Log::warning("ImageDownloader: GD WebP failed", ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Ни Imagick ни GD не доступны — WebP не создаём, работаем с оригиналом
+        Log::info("ImageDownloader: WebP недоступен (нет Imagick/GD), сохранён только оригинал");
+        return null;
     }
 
-    /**
-     * Определяет расширение по MIME-типу.
-     */
+    private function isValidImageContent(string $content): bool
+    {
+        $h = substr($content, 0, 12);
+        return str_starts_with($h, "\xFF\xD8\xFF")          // JPEG
+            || str_starts_with($h, "\x89PNG")               // PNG
+            || (str_starts_with($h, 'RIFF') && str_contains(substr($h, 8, 4), 'WEBP')) // WebP
+            || str_starts_with($h, 'GIF8');                 // GIF
+    }
+
     private function extensionFromMime(string $mime): ?string
     {
         return match (true) {
@@ -148,5 +221,15 @@ class ImageDownloader
             str_contains($mime, 'gif')  => 'gif',
             default                     => null,
         };
+    }
+
+    private function isInternalHost(string $host): bool
+    {
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return ! filter_var($host, FILTER_VALIDATE_IP,
+                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+        }
+        // Для доменов — простая проверка на localhost
+        return in_array(strtolower($host), ['localhost', '::1'], true);
     }
 }
