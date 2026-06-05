@@ -3,50 +3,52 @@
 namespace App\Services\Import;
 
 use Illuminate\Support\Facades\Storage;
-use Maatwebsite\Excel\Facades\Excel;
-use Maatwebsite\Excel\HeadingRowImport;
+use Rap2hpoutre\FastExcel\FastExcel;
 
 /**
  * ImportFileParser
  *
- * Читает файл любого поддерживаемого формата (XLS/XLSX/CSV)
- * и возвращает массив строк с заголовками из первой строки.
+ * Читает файлы XLS/XLSX/CSV и возвращает массив строк.
+ *
+ * ИЗМЕНЕНИЕ: заменён maatwebsite/excel на rap2hpoutre/fast-excel.
+ * Причина: maatwebsite/excel требует ext-gd через phpspreadsheet,
+ * которого нет на shared-хостинге hoster.kz.
+ * fast-excel использует openspout — не требует ext-gd.
  *
  * Результат: array of associative arrays
- * [
- *   ['Номенклатура.Код' => 'РТ-00001272', 'Розничная цена' => 7300, ...],
- *   ...
- * ]
+ * [['Номенклатура.Код' => 'РТ-00001272', 'Розничная цена' => 7300, ...], ...]
  */
 class ImportFileParser
 {
-    /**
-     * Поддерживаемые расширения файлов.
-     */
     public static array $allowedExtensions = ['xls', 'xlsx', 'csv'];
 
     /**
      * Парсит файл из storage и возвращает все строки.
-     *
-     * @param  string $storagePath  Путь в storage (imports/file.xlsx)
-     * @return array[]
      */
     public function parse(string $storagePath): array
     {
         $fullPath  = Storage::disk('public')->path($storagePath);
         $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
 
+        if (! file_exists($fullPath)) {
+            throw new \RuntimeException("Файл не найден: {$fullPath}");
+        }
+
+        if (! in_array($extension, self::$allowedExtensions, true)) {
+            throw new \InvalidArgumentException(
+                "Неподдерживаемый формат: {$extension}. Допустимы: " .
+                implode(', ', self::$allowedExtensions)
+            );
+        }
+
         return match ($extension) {
             'csv'          => $this->parseCsv($fullPath),
-            'xls', 'xlsx'  => $this->parseExcel($storagePath),
-            default        => throw new \InvalidArgumentException(
-                "Неподдерживаемый формат файла: {$extension}"
-            ),
+            'xls', 'xlsx'  => $this->parseXlsx($fullPath),
         };
     }
 
     /**
-     * Возвращает только первые N строк для предпросмотра.
+     * Первые N строк для предпросмотра.
      */
     public function preview(string $storagePath, int $limit = 20): array
     {
@@ -54,95 +56,73 @@ class ImportFileParser
     }
 
     /**
-     * Возвращает список колонок (заголовков) файла.
+     * Список колонок (заголовков) файла.
      */
     public function getColumns(string $storagePath): array
     {
-        $rows = $this->parse($storagePath);
+        $rows = $this->preview($storagePath, 1);
         return ! empty($rows) ? array_keys($rows[0]) : [];
     }
 
     /**
-     * Читает XLSX/XLS через Maatwebsite Excel.
+     * Читает XLSX/XLS через FastExcel (openspout — без ext-gd).
+     * FastExcel автоматически использует первую строку как заголовки.
      */
-    private function parseExcel(string $storagePath): array
+    private function parseXlsx(string $fullPath): array
     {
-        // HeadingRowImport читает первую строку как заголовки
-        $data = Excel::toArray(new HeadingRowImport(), Storage::disk('public')->path($storagePath));
+        $rows = [];
 
-        if (empty($data[0])) {
-            return [];
-        }
+        (new FastExcel())->import($fullPath, function (array $line) use (&$rows) {
+            // Пропускаем полностью пустые строки
+            if (empty(array_filter($line, fn($v) => $v !== null && $v !== ''))) {
+                return null;
+            }
+            $rows[] = $line;
+        });
 
-        // Первый лист
-        $rows = $data[0];
-
-        // Убираем пустые строки
-        return array_filter($rows, fn ($row) =>
-            ! empty(array_filter($row, fn ($v) => $v !== null && $v !== ''))
-        );
+        return $rows;
     }
 
     /**
-     * Читает CSV с автоопределением разделителя и кодировки.
+     * Читает CSV через FastExcel.
      */
     private function parseCsv(string $fullPath): array
     {
-        // Определяем кодировку
+        // Определяем и нормализуем кодировку
         $content = file_get_contents($fullPath);
         if (! mb_check_encoding($content, 'UTF-8')) {
             $content = mb_convert_encoding($content, 'UTF-8', 'Windows-1251');
             file_put_contents($fullPath, $content);
         }
 
-        // Определяем разделитель (;  или  ,  или  \t)
-        $firstLine = strtok($content, "\n");
-        $delimiter = $this->detectDelimiter($firstLine);
+        $rows      = [];
+        $delimiter = $this->detectDelimiter($fullPath);
 
-        $handle = fopen($fullPath, 'r');
-        if (! $handle) {
-            throw new \RuntimeException("Не удалось открыть файл: {$fullPath}");
-        }
-
-        $headers = null;
-        $rows    = [];
-
-        while (($line = fgetcsv($handle, 0, $delimiter)) !== false) {
-            if ($headers === null) {
-                // Первая строка — заголовки
-                $headers = array_map('trim', $line);
-                continue;
+        (new FastExcel())->configureCsv($delimiter)->import($fullPath, function (array $line) use (&$rows) {
+            if (empty(array_filter($line, fn($v) => $v !== null && $v !== ''))) {
+                return null;
             }
+            $rows[] = $line;
+        });
 
-            // Пустые строки пропускаем
-            if (empty(array_filter($line))) {
-                continue;
-            }
-
-            // Строим ассоциативный массив
-            $row = [];
-            foreach ($headers as $i => $header) {
-                $row[$header] = isset($line[$i]) ? trim($line[$i]) : null;
-            }
-            $rows[] = $row;
-        }
-
-        fclose($handle);
         return $rows;
     }
 
     /**
      * Определяет разделитель CSV по первой строке.
      */
-    private function detectDelimiter(string $firstLine): string
+    private function detectDelimiter(string $path): string
     {
-        $delimiters = [';' => 0, ',' => 0, "\t" => 0, '|' => 0];
+        $handle = fopen($path, 'r');
+        $first  = fgets($handle);
+        fclose($handle);
 
-        foreach (array_keys($delimiters) as $delimiter) {
-            $delimiters[$delimiter] = substr_count($firstLine, $delimiter);
+        $counts = [];
+        foreach ([';', ',', "\t", '|'] as $d) {
+            $counts[$d] = substr_count($first, $d);
         }
 
-        arsort($delimiters);
-        return array_key_first($delimiters);
+        arsort($counts);
+        return array_key_first($counts);
     }
 }
