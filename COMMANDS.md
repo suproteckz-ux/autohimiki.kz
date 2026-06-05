@@ -1,19 +1,31 @@
-# Команды установки autohimiki.kz на hoster.kz (Plesk)
+# Команды для autohimiki.kz на hoster.kz (Plesk + CloudLinux)
 
-## Путь к PHP 8.3 на hoster.kz
+## Проблема: Laravel Toolkit использует /usr/bin/php
+
+На hoster.kz с CloudLinux существуют два разных PHP:
+
+| | Путь | PDO MySQL | Используется |
+|---|---|---|---|
+| Системный | `/usr/bin/php` | ❌ НЕТ | Laravel Toolkit |
+| PHP Selector | `/opt/alt/php83/usr/bin/php` | ✅ ЕСТЬ | Веб-сайт |
+
+**Именно поэтому `could not find driver`** — Toolkit запускает artisan
+через системный PHP без pdo_mysql.
+
+---
+
+## РЕШЕНИЕ: всегда использовать полный путь к PHP 8.3
 
 ```bash
-# hoster.kz использует нестандартный путь к PHP
-/opt/alt/php83/usr/bin/php --version
-
-# Для удобства — создать алиас в текущей сессии:
-alias php='/opt/alt/php83/usr/bin/php'
-alias composer='/opt/alt/php83/usr/bin/php /usr/local/bin/composer'
+# Правильный PHP для artisan на hoster.kz:
+/opt/alt/php83/usr/bin/php artisan <команда>
 ```
 
 ---
 
-## Шаг 1. Создание storage/framework/*
+## Все команды установки
+
+### Шаг 1. Создание директорий storage
 
 ```bash
 mkdir -p storage/framework/views
@@ -21,113 +33,73 @@ mkdir -p storage/framework/sessions
 mkdir -p storage/framework/cache/data
 mkdir -p storage/framework/testing
 mkdir -p storage/logs
-mkdir -p storage/backups
 mkdir -p bootstrap/cache
-mkdir -p storage/app/public/products
-mkdir -p storage/app/public/categories
-mkdir -p storage/app/public/brands
-mkdir -p storage/app/public/blog
-mkdir -p storage/app/public/imports
-mkdir -p storage/app/public/site
-
-# Права
-chmod -R 775 storage
-chmod -R 775 bootstrap/cache
+chmod -R 775 storage bootstrap/cache
 ```
 
----
-
-## Шаг 2. Создание .env из шаблона
+### Шаг 2. .env — создать и заполнить
 
 ```bash
 cp .env.example .env
 ```
 
-Затем открыть файл и заполнить:
+Открыть `.env` и задать:
 ```
 APP_URL=https://autohimiki.kz
 APP_DEBUG=false
+APP_KEY=                     # заполнит команда ниже
 
-DB_HOST=127.0.0.1
-DB_DATABASE=autohimiki          # имя БД из Plesk
-DB_USERNAME=autohimiki_user     # пользователь БД из Plesk
-DB_PASSWORD=ваш_пароль
-
-SESSION_SECURE_COOKIE=true
+DB_HOST=localhost
+DB_DATABASE=p-352011_autohimiki_test
+DB_USERNAME=p-352011_autohimiki_test
+DB_PASSWORD=ВАШ_ПАРОЛЬ
 ```
 
----
-
-## Шаг 3. Генерация APP_KEY
+### Шаг 3. Генерация APP_KEY
 
 ```bash
 /opt/alt/php83/usr/bin/php artisan key:generate
 ```
 
-Ожидаемый вывод:
-```
-Application key set successfully.
-```
-
----
-
-## Шаг 4. Символическая ссылка storage
+### Шаг 4. storage:link
 
 ```bash
 /opt/alt/php83/usr/bin/php artisan storage:link
 ```
 
-Ожидаемый вывод:
-```
-The [public/storage] link has been connected to [storage/app/public].
-```
-
----
-
-## Шаг 5. Очистка всех кэшей
+### Шаг 5. optimize:clear
 
 ```bash
 /opt/alt/php83/usr/bin/php artisan optimize:clear
 ```
 
-Ожидаемый вывод:
-```
-Cached events cleared successfully.
-Cached views cleared successfully.
-Compiled views cleared successfully.
-Application cache cleared successfully.
-Route cache cleared successfully.
-Configuration cache cleared successfully.
-Compiled services and packages files removed successfully.
-```
-
----
-
-## Шаг 6. Миграции
+### Шаг 6. Миграции (ОБЯЗАТЕЛЬНО через PHP 8.3!)
 
 ```bash
-/opt/alt/php83/usr/bin/php artisan migrate
+/opt/alt/php83/usr/bin/php artisan migrate --force
 ```
 
----
+Ожидаемый результат:
+```
+Running migrations...
+2025_01_001_create_categories_table ............. 12ms DONE
+2025_01_002_create_brands_table ................. 8ms  DONE
+...
+```
 
-## Шаг 7. Сидеры (базовые данные)
+### Шаг 7. Сидеры
 
 ```bash
-/opt/alt/php83/usr/bin/php artisan db:seed
+/opt/alt/php83/usr/bin/php artisan db:seed --force
 ```
 
----
-
-## Шаг 8. Создание администратора
+### Шаг 8. Администратор Filament
 
 ```bash
 /opt/alt/php83/usr/bin/php artisan make:filament-user
 ```
 
----
-
-## Шаг 9. Кэш для production
+### Шаг 9. Кэш production
 
 ```bash
 /opt/alt/php83/usr/bin/php artisan optimize
@@ -135,50 +107,105 @@ Compiled services and packages files removed successfully.
 
 ---
 
-## Все команды одной строкой (после настройки .env)
+## Удобный псевдоним (алиас) на время сессии SSH
+
+Добавить в начало SSH-сессии:
 
 ```bash
-PHP=/opt/alt/php83/usr/bin/php
+alias php='/opt/alt/php83/usr/bin/php'
+```
 
-mkdir -p storage/framework/{views,sessions,cache/data,testing} storage/logs storage/backups bootstrap/cache storage/app/public/{products,categories,brands,blog,imports,site}
-chmod -R 775 storage bootstrap/cache
+После этого можно писать просто:
 
-cp .env.example .env
-# !! Заполни .env вручную !!
-
-$PHP artisan key:generate
-$PHP artisan storage:link
-$PHP artisan optimize:clear
-$PHP artisan migrate
-$PHP artisan db:seed
-$PHP artisan make:filament-user
-$PHP artisan optimize
+```bash
+php artisan migrate --force
+php artisan db:seed
+php artisan make:filament-user
+php artisan optimize
 ```
 
 ---
 
-## Решение типичных ошибок
+## Постоянный алиас (для всех сессий)
 
-### InvalidArgumentException: Please provide a valid cache path
+Добавить в `~/.bashrc` или `~/.bash_profile`:
+
 ```bash
-mkdir -p storage/framework/cache/data
-mkdir -p storage/framework/views
-mkdir -p storage/framework/sessions
-chmod -R 775 storage
-/opt/alt/php83/usr/bin/php artisan optimize:clear
+echo "alias php='/opt/alt/php83/usr/bin/php'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+## Wrapper-скрипт artisan83
+
+В проекте есть готовый wrapper `artisan83`:
+
+```bash
+bash artisan83 migrate --force
+bash artisan83 db:seed
+bash artisan83 make:filament-user
+```
+
+---
+
+## Как настроить Laravel Toolkit на правильный PHP
+
+В Plesk → Laravel Toolkit → Settings:
+```
+PHP Path: /opt/alt/php83/usr/bin/php
+```
+
+Если такой настройки нет в UI — использовать SSH напрямую.
+
+---
+
+## Диагностика
+
+```bash
+# Запустить диагностику:
+bash diagnose.sh
+
+# Проверить вручную:
+/usr/bin/php -r "echo implode(', ', PDO::getAvailableDrivers());"
+# Вероятный вывод: odbc, pgsql, sqlite  (mysql ОТСУТСТВУЕТ)
+
+/opt/alt/php83/usr/bin/php -r "echo implode(', ', PDO::getAvailableDrivers());"
+# Вероятный вывод: mysql, odbc, pgsql, sqlite  ✅
+
+# Тест подключения к БД:
+/opt/alt/php83/usr/bin/php -r "
+new PDO('mysql:host=localhost;dbname=p-352011_autohimiki_test',
+        'p-352011_autohimiki_test', 'ПАРОЛЬ');
+echo 'OK';
+"
+```
+
+---
+
+## Типичные ошибки и решения
+
+### could not find driver
+```
+Причина:  artisan запущен через /usr/bin/php (нет pdo_mysql)
+Решение:  использовать /opt/alt/php83/usr/bin/php artisan migrate
+```
+
+### SQLSTATE[HY000] [2002] Connection refused
+```
+Причина:  DB_HOST=127.0.0.1 — на shared хостинге нужен localhost
+Решение:  DB_HOST=localhost в .env
+```
+
+### SQLSTATE[HY000] [1045] Access denied
+```
+Причина:  неверный DB_USERNAME или DB_PASSWORD
+Решение:  скопировать точные данные из Plesk → Databases
 ```
 
 ### Class "Str" not found (в config/)
-Убедиться что в `config/database.php`, `config/cache.php`, `config/session.php`
-есть строка `use Illuminate\Support\Str;` в начале файла.
-
-### PHP Warning: Unable to load dynamic library 'pdo_oci.so'
-Игнорировать — это предупреждение Oracle PDO, не влияет на MySQL.
-
-### The stream or file "storage/logs/laravel.log" could not be opened
-```bash
-mkdir -p storage/logs
-chmod -R 775 storage/logs
-touch storage/logs/laravel.log
-chmod 664 storage/logs/laravel.log
+```
+Причина:  отсутствует use Illuminate\Support\Str в config/*.php
+Файлы:    config/database.php, config/cache.php, config/session.php
+Решение:  уже исправлено в текущей версии архива
 ```
