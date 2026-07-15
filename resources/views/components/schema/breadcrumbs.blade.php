@@ -1,33 +1,28 @@
 @props(['items' => []])
 
 @php
-    // Всегда добавляем "Главная" первым элементом
-    $crumbs = array_merge(
-        [['name' => 'Главная', 'url' => url('/')]],
-        $items
-    );
+    $crumbs = array_values(array_filter(
+        array_merge([['name' => 'Главная', 'url' => url('/')]], $items),
+        fn ($crumb) => ! empty($crumb['name'])
+    ));
 
-    // Убираем null и пустые элементы, переиндексируем
-    $crumbs = array_values(array_filter($crumbs, fn($c) => ! empty($c['name'])));
+    $schema = [
+        '@context' => 'https://schema.org',
+        '@type' => 'BreadcrumbList',
+        'itemListElement' => collect($crumbs)
+            ->values()
+            ->map(fn ($crumb, $index) => array_filter([
+                '@type' => 'ListItem',
+                'position' => $index + 1,
+                'name' => $crumb['name'],
+                'item' => $crumb['url'] ?? null,
+            ]))
+            ->all(),
+    ];
 @endphp
 
 @if(count($crumbs) > 1)
 <script type="application/ld+json">
-{
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "itemListElement": [
-        @foreach($crumbs as $index => $crumb)
-        {
-            "@type": "ListItem",
-            "position": {{ $index + 1 }},
-            "name": "{{ addslashes($crumb['name']) }}"
-            @if(! empty($crumb['url']))
-            , "item": "{{ $crumb['url'] }}"
-            @endif
-        }{{ ! $loop->last ? ',' : '' }}
-        @endforeach
-    ]
-}
+{!! \Illuminate\Support\Js::from($schema) !!}
 </script>
 @endif
