@@ -46,4 +46,10 @@ class SeoFilter extends Model
     {
         return $query->where('is_active', true);
     }
+
+    public function scopeIndexed(Builder $query): Builder
+    {
+        return $query->where('is_active', true)
+            ->where('is_indexed', true);
+    }
 }
