@@ -1,5 +1,24 @@
 <?php
+
 namespace App\Models;
+
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-// TODO: скопировать полный код из этапа 3 (database/)
-class Redirect extends Model {}
+
+class Redirect extends Model
+{
+    protected $fillable = [
+        'from_url',
+        'to_url',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+    ];
+
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('is_active', true);
+    }
+}

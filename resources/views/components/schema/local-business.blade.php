@@ -1,40 +1,42 @@
 @once
 @php
-    $phone    = \App\Models\Setting::get('phone', '');
-    $email    = \App\Models\Setting::get('email', '');
-    $address  = \App\Models\Setting::get('address', 'Алматы');
-    $schedule = \App\Models\Setting::get('schedule', 'Mo-Fr 09:00-19:00');
-    $instagram = \App\Models\Setting::get('instagram', '');
+    $phone = \App\Services\CacheService::setting('phone', '');
+    $email = \App\Services\CacheService::setting('email', '');
+    $address = \App\Services\CacheService::setting('address', 'Almaty');
+    $instagram = \App\Services\CacheService::setting('instagram', '');
+
+    $schema = [
+        '@context' => 'https://schema.org',
+        '@type' => 'Store',
+        'name' => 'Autohimiki.kz',
+        'description' => 'Auto chemistry and car care products in Almaty',
+        'url' => url('/'),
+        'address' => [
+            '@type' => 'PostalAddress',
+            'streetAddress' => $address,
+            'addressLocality' => 'Almaty',
+            'addressRegion' => 'Almaty',
+            'addressCountry' => 'KZ',
+        ],
+        'openingHours' => [
+            'Mo-Fr 09:00-19:00',
+            'Sa 10:00-17:00',
+        ],
+        'priceRange' => 'KZT',
+    ];
+
+    if ($phone) {
+        $schema['telephone'] = $phone;
+    }
+
+    if ($email) {
+        $schema['email'] = $email;
+    }
+
+    if ($instagram) {
+        $schema['sameAs'] = [$instagram];
+    }
 @endphp
 
-<script type="application/ld+json">
-{
-    "@context": "https://schema.org",
-    "@type": "Store",
-    "name": "Autohimiki.kz",
-    "description": "Автохимия и товары для ухода за автомобилем в Алматы",
-    "url": "{{ url('/') }}",
-    @if($phone)
-    "telephone": "{{ $phone }}",
-    @endif
-    @if($email)
-    "email": "{{ $email }}",
-    @endif
-    "address": {
-        "@type": "PostalAddress",
-        "streetAddress": "{{ $address }}",
-        "addressLocality": "Алматы",
-        "addressRegion": "Алматы",
-        "addressCountry": "KZ"
-    },
-    "openingHours": [
-        "Mo-Fr 09:00-19:00",
-        "Sa 10:00-17:00"
-    ],
-    "priceRange": "₸₸"
-    @if($instagram)
-    , "sameAs": ["{{ $instagram }}"]
-    @endif
-}
-</script>
+<script type="application/ld+json">{!! \Illuminate\Support\Js::from($schema) !!}</script>
 @endonce

@@ -28,13 +28,13 @@ use Illuminate\Support\Facades\Storage;
  */
 class ImportWizardPage extends Page
 {
-    protected static ?string $navigationIcon  = 'heroicon-o-arrow-up-tray';
-    protected static ?string $navigationGroup = 'Импорт';
+    protected static string | \BackedEnum | null $navigationIcon  = 'heroicon-o-arrow-up-tray';
+    protected static string | \UnitEnum | null $navigationGroup = 'Импорт';
     protected static ?string $navigationLabel = 'Импорт товаров';
     protected static ?string $title           = 'Импорт товаров';
     protected static ?int    $navigationSort  = 1;
 
-    protected static string $view = 'filament.pages.import-wizard';
+    protected string $view = 'filament.pages.import-wizard';
 
     // ── Состояние мастера ─────────────────────────────────────────
 

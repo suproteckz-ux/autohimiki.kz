@@ -12,13 +12,13 @@ use Filament\Pages\Page;
  */
 class ExportPage extends Page
 {
-    protected static ?string $navigationIcon  = 'heroicon-o-arrow-down-tray';
-    protected static ?string $navigationGroup = 'Импорт';
+    protected static string | \BackedEnum | null $navigationIcon  = 'heroicon-o-arrow-down-tray';
+    protected static string | \UnitEnum | null $navigationGroup = 'Импорт';
     protected static ?string $navigationLabel = 'Экспорт товаров';
     protected static ?string $title           = 'Экспорт товаров';
     protected static ?int    $navigationSort  = 3;
 
-    protected static string $view = 'filament.pages.export-page';
+    protected string $view = 'filament.pages.export-page';
 
     public bool $activeOnly = true;
 
