@@ -27,7 +27,7 @@ export default defineConfig({
         },
 
         // CSS inlining: < 4KB инлайним в HTML (ускоряет FCP)
-        cssCodeSplit: false,          // один CSS файл — меньше HTTP запросов
+        cssCodeSplit: true,           // CSS остается отдельным entry для Vite 5
 
         // Rollup настройки
         rollupOptions: {
