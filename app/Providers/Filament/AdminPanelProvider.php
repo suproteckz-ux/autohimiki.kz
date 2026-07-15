@@ -2,7 +2,6 @@
 
 namespace App\Providers\Filament;
 
-use App\Models\User;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -35,7 +34,6 @@ class AdminPanelProvider extends PanelProvider
             // ── Авторизация ───────────────────────────────────────
             // Только пользователи с ролью admin или manager
             ->authGuard('web')
-            ->authorization(fn (User $user) => $user->can('access-admin'))
 
             // ── Ресурсы ───────────────────────────────────────────
             ->discoverResources(
@@ -53,11 +51,9 @@ class AdminPanelProvider extends PanelProvider
             )
             ->widgets([
                 Widgets\AccountWidget::class,
-                \App\Filament\Widgets\StatsOverviewWidget::class,
             ])
 
             // ── Сессия: 8 часов для админки ──────────────────────
-            ->sessionLifetime(480)
 
             // ── Middleware ────────────────────────────────────────
             ->middleware([
