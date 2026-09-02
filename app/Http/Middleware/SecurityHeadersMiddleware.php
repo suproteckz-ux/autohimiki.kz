@@ -31,9 +31,9 @@ class SecurityHeadersMiddleware
      */
     private const UNIVERSAL_HEADERS = [
         'X-Content-Type-Options' => 'nosniff',
-        'X-Frame-Options'        => 'SAMEORIGIN',
-        'Referrer-Policy'        => 'strict-origin-when-cross-origin',
-        'Permissions-Policy'     => 'camera=(), microphone=(), geolocation=(self), payment=()',
+        'X-Frame-Options' => 'SAMEORIGIN',
+        'Referrer-Policy' => 'strict-origin-when-cross-origin',
+        'Permissions-Policy' => 'camera=(), microphone=(), geolocation=(self), payment=()',
     ];
 
     public function handle(Request $request, Closure $next): Response
@@ -89,25 +89,25 @@ class SecurityHeadersMiddleware
      * - Скрипты: self + аналитика Google/Яндекс/Facebook
      * - Стили: self + Google Fonts
      * - Изображения: self + data: (inline) + https: (любые CDN)
-     * - Фреймы: запрещены (frame-src 'none')
+     * - Фреймы: только официальный Kaspi widget
      */
     private function buildPublicCsp(): string
     {
         $directives = [
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-                . "https://www.googletagmanager.com "
-                . "https://www.google-analytics.com "
-                . "https://connect.facebook.net "
-                . "https://mc.yandex.ru",
+                .'https://www.googletagmanager.com '
+                .'https://www.google-analytics.com '
+                .'https://connect.facebook.net '
+                .'https://mc.yandex.ru https://kaspi.kz',
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "font-src 'self' https://fonts.gstatic.com",
             "img-src 'self' data: https: blob:",
             "connect-src 'self' "
-                . "https://www.google-analytics.com "
-                . "https://mc.yandex.ru "
-                . "https://api.whatsapp.com",
-            "frame-src 'none'",
+                .'https://www.google-analytics.com '
+                .'https://mc.yandex.ru '
+                .'https://api.whatsapp.com',
+            'frame-src https://kaspi.kz',
             "object-src 'none'",
             "base-uri 'self'",
             "form-action 'self' https://wa.me",  // форма может вести на WhatsApp
@@ -119,6 +119,7 @@ class SecurityHeadersMiddleware
     private function isBinaryResponse(Response $response): bool
     {
         $contentType = $response->headers->get('Content-Type', '');
+
         return str_contains($contentType, 'image/')
             || str_contains($contentType, 'application/octet-stream')
             || str_contains($contentType, 'application/pdf');

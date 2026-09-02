@@ -119,5 +119,6 @@
     @vite(['resources/js/app.js'])
 
     @include('components.ui.analytics')
+    @stack('scripts')
 </body>
 </html>

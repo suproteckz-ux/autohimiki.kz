@@ -151,6 +151,8 @@
                 </button>
             </div>
 
+            <x-kaspi.credit-button :product="$product" />
+
             {{-- Краткое описание --}}
             @if($product->short_description)
             <div class="text-sm text-gray-600 leading-relaxed bg-gray-50 rounded-xl p-4">
