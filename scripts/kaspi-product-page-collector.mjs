@@ -1,7 +1,15 @@
 import { pathToFileURL } from 'node:url';
 
-export const expectedUrl = 'https://kaspi.kz/shop/p/mitsuji-ochistitel-universal-nyi-mtz4002-0-65-l-142775620/';
-export function pageReason({url, status, html, captcha}) {
+export function validProductUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && (url.hostname === 'kaspi.kz' || url.hostname.endsWith('.kaspi.kz'))
+      && !url.username && !url.password && !url.port && !url.search && !url.hash
+      && /^\/shop\/p\/[^/]+-[0-9]+\/$/.test(url.pathname);
+  } catch { return false; }
+}
+export function pageReason({url, status, html, captcha}, expectedUrl) {
+  if (!validProductUrl(expectedUrl)) return 'wrong_product';
   if (captcha) return 'captcha_detected';
   try {
     const parsed = new URL(url);
@@ -33,7 +41,8 @@ async function main() {
   let result = {status:'failed', reason:'collector_failed', captcha:false};
   try {
     if (process.platform !== 'win32' || arg('headless') !== 'false') throw Error('local_browser_disabled');
-    if (arg('url') !== expectedUrl) throw Error('wrong_product');
+    const expectedUrl = arg('url');
+    if (!validProductUrl(expectedUrl)) throw Error('wrong_product');
     const { chromium } = await import('playwright');
     browser = await chromium.launch({headless:false, timeout:15000});
     const context = await browser.newContext({locale:'ru-RU', viewport:{width:1440,height:1000}});
@@ -47,7 +56,7 @@ async function main() {
           || (document.querySelector('h1') && document.querySelector('meta[property="og:image"]')), null, {timeout:15000});
         const html = await page.content();
         const captcha = await captchaPresent(page);
-        const reason = pageReason({url:page.url(),status:response?.status() ?? 0,html,captcha});
+        const reason = pageReason({url:page.url(),status:response?.status() ?? 0,html,captcha}, expectedUrl);
         if (reason) throw Error(reason);
         result = {status:'ok', final_url:expectedUrl, http_status:response.status(), html, captcha:false};
         break;

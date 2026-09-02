@@ -3,12 +3,15 @@
 namespace App\Services\Kaspi;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 
 class KaspiProductionBridgeService
 {
     public function __construct(private readonly KaspiLocalBrowserGuard $guard, private readonly KaspiProductionCandidateClient $candidates,
         private readonly KaspiLocalUrlResolver $resolver, private readonly KaspiLocalPageCollector $collector,
         private readonly KaspiProductionPayloadValidator $validator) {}
+
+    private ?float $lastRequestAt = null;
 
     public function prepare(string $sku, bool $debug = false): array
     {
@@ -17,14 +20,29 @@ class KaspiProductionBridgeService
         if (KaspiUrlRules::base() !== 'https://autohimiki.kz') {
             throw new \RuntimeException('production_base_mismatch');
         }
+        $rows = $this->candidates->fetch(['sku' => $sku, 'limit' => 1]);
+        if (count($rows) !== 1 || $rows[0]['sku'] !== $sku) {
+            throw new \RuntimeException('candidate_identity_mismatch');
+        }
+
+        return $this->prepareCandidate($rows[0], $debug);
+    }
+
+    public function prepareCandidate(array $candidate, bool $debug = false, ?callable $onResolved = null): array
+    {
+        $sku = $candidate['sku'];
+        KaspiSingleProductPolicy::assertSku($sku);
+        $this->guard->assertAllowed();
+        if (KaspiUrlRules::base() !== 'https://autohimiki.kz') {
+            throw new \RuntimeException('production_base_mismatch');
+        }
         if (! config('services.kaspi.merchant_id') || ! config('services.kaspi.city_id')) {
             throw new \RuntimeException('widget_configuration_missing');
         }
-        $rows = $this->candidates->fetch(['sku' => $sku, 'limit' => 1]);
-        if (count($rows) !== 1 || $rows[0]['sku'] !== $sku || $rows[0]['storefront_url'] !== KaspiSingleProductPolicy::STOREFRONT) {
+        if (! KaspiUrlRules::storefront($candidate['storefront_url'])) {
             throw new \RuntimeException('candidate_identity_mismatch');
         }
-        $resolved = $this->resolver->resolve($rows[0], $debug);
+        $resolved = $this->resolver->resolve($candidate, $debug);
         if (($resolved['status'] ?? '') !== 'resolved') {
             $status = $resolved['status'] ?? '';
             $reason = in_array($status, ['widget_not_found', 'widget_mismatch', 'iframe_not_loaded',
@@ -33,11 +51,14 @@ class KaspiProductionBridgeService
             throw new \RuntimeException('resolver_not_verified_'.$reason);
         }
         if (($resolved['sku'] ?? '') !== $sku
-            || ($resolved['storefront_url'] ?? '') !== KaspiSingleProductPolicy::STOREFRONT || ($resolved['kaspi_url'] ?? '') !== KaspiSingleProductPolicy::URL) {
+            || ($resolved['storefront_url'] ?? '') !== $candidate['storefront_url'] || ! KaspiUrlRules::product((string) ($resolved['kaspi_url'] ?? ''))) {
             throw new \RuntimeException('resolver_not_verified');
         }
+        if ($onResolved) {
+            $onResolved();
+        }
         $parsed = $this->collector->collectUrl($resolved['kaspi_url']);
-        $payload = $this->validator->validate(['version' => 1, 'sku' => $sku, 'storefront_url' => KaspiSingleProductPolicy::STOREFRONT,
+        $payload = $this->validator->validate(['version' => 1, 'sku' => $sku, 'storefront_url' => $candidate['storefront_url'],
             'kaspi_url' => $parsed['url'], 'content' => ['title' => $parsed['title'], 'description' => $parsed['description'], 'images' => $parsed['images'], 'attributes' => $parsed['attributes']],
             'source' => ['collector' => 'local-playwright', 'resolver_verified' => true, 'captcha' => false,
                 'merchant_id' => (string) config('services.kaspi.merchant_id'), 'city_id' => (string) config('services.kaspi.city_id')]]);
@@ -60,7 +81,7 @@ class KaspiProductionBridgeService
         $this->guard->assertAllowed();
         $payload = $this->validator->validate($payload);
         $result = $this->request('POST', $payload);
-        if (($result['sku'] ?? '') !== KaspiSingleProductPolicy::SKU || ! in_array($result['status'] ?? '', ['imported', 'unchanged'], true)) {
+        if (($result['sku'] ?? '') !== $payload['sku'] || ! in_array($result['status'] ?? '', ['imported', 'unchanged'], true)) {
             throw new \RuntimeException('invalid_import_response_check_before_retry');
         }
 
@@ -76,6 +97,14 @@ class KaspiProductionBridgeService
         if (trim($token) === '') {
             throw new \RuntimeException('internal_api_token_missing');
         }
+        // Six requests/minute on production, shared by GET and POST. Never retry an uncertain POST.
+        if ($this->lastRequestAt !== null) {
+            $milliseconds = (int) ceil(max(0, 11 - (microtime(true) - $this->lastRequestAt)) * 1000);
+            if ($milliseconds > 0) {
+                Sleep::for($milliseconds)->milliseconds();
+            }
+        }
+        $this->lastRequestAt = microtime(true);
         try {
             $client = Http::acceptJson()->withToken($token)->connectTimeout(5)->timeout(210)->withoutRedirecting();
             $url = KaspiUrlRules::base().'/api/internal/kaspi-content/import';

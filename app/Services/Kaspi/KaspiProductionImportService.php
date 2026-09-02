@@ -10,17 +10,17 @@ class KaspiProductionImportService
 {
     public function __construct(private readonly KaspiSecureImageDownloader $downloader) {}
 
-    private function product(bool $lock = false): object
+    private function product(string $sku, bool $lock = false): object
     {
-        $query = DB::table('products')->where('sku', KaspiSingleProductPolicy::SKU);
+        $query = DB::table('products')->where('sku', $sku);
         if ($lock) {
             $query->lockForUpdate();
         }
         $product = $query->first();
-        if (! $product || $product->sku !== KaspiSingleProductPolicy::SKU || ! $product->is_active) {
+        if (! $product || $product->sku !== $sku || ! $product->is_active) {
             throw new \RuntimeException('active_product_not_found', 404);
         }
-        if ($product->slug !== KaspiSingleProductPolicy::SLUG) {
+        if (trim((string) $product->slug) === '' || str_contains($product->slug, '/')) {
             throw new \RuntimeException('storefront_mismatch', 409);
         }
 
@@ -30,7 +30,7 @@ class KaspiProductionImportService
     public function preview(mixed $sku): array
     {
         KaspiSingleProductPolicy::assertSku($sku);
-        $product = $this->product();
+        $product = $this->product($sku);
 
         return ['sku' => $product->sku, 'main_image_action' => $this->exists($product->main_image) ? 'preserve' : 'replace_broken_or_empty',
             'description_action' => trim((string) $product->description) === '' ? 'fill_if_collected' : 'preserve',
@@ -41,21 +41,23 @@ class KaspiProductionImportService
 
     private function exists(?string $path): bool
     {
-        return is_string($path) && $path !== '' && ! str_contains($path, '..') && ! preg_match('#^(?:/|[a-z]+:)|\\\\#i', $path)
-            && Storage::disk('public')->exists($path);
+        return KaspiSingleProductPolicy::mainImageExists($path);
     }
 
     public function import(array $payload): array
     {
         KaspiSingleProductPolicy::assertSku($payload['sku'] ?? null);
-        $lock = Cache::lock('kaspi-1c-import-'.KaspiSingleProductPolicy::SKU, 300);
+        $lock = Cache::lock('kaspi-1c-import-'.hash('sha256', $payload['sku']), 300);
         if (! $lock->get()) {
             throw new \RuntimeException('import_in_progress', 409);
         }
         $created = [];
         try {
             return DB::transaction(function () use ($payload, &$created): array {
-                $product = $this->product(true);
+                $product = $this->product($payload['sku'], true);
+                if ($payload['storefront_url'] !== KaspiUrlRules::base().'/product/'.rawurlencode($product->slug)) {
+                    throw new \RuntimeException('storefront_mismatch', 409);
+                }
                 $disk = Storage::disk('public');
                 $gallery = DB::table('product_images')->where('product_id', $product->id)->get();
                 $paths = $gallery->pluck('path')->all();
@@ -76,7 +78,7 @@ class KaspiProductionImportService
                 $attributesAdded = 0;
                 $incomingAttributes = $payload['content']['attributes'] ?? [];
                 if ($incomingAttributes !== []) {
-                    $existingAttributes = trim((string) $product->attributes) === '' ? [] : json_decode($product->attributes, true);
+                    $existingAttributes = in_array(trim((string) $product->attributes), ['', 'null'], true) ? [] : json_decode($product->attributes, true);
                     if (! is_array($existingAttributes) || ($existingAttributes !== [] && array_is_list($existingAttributes))) {
                         throw new \RuntimeException('attributes_format_unsupported', 409);
                     }
@@ -102,7 +104,7 @@ class KaspiProductionImportService
                 $order = (int) ($gallery->max('sort_order') ?? -1);
                 foreach ($payload['content']['images'] as $index => $url) {
                     $image = $this->downloader->download($url);
-                    $path = $existing[$image['hash']] ?? 'products/kaspi/'.KaspiSingleProductPolicy::SKU.'/'.$image['hash'].'.'.$image['extension'];
+                    $path = $existing[$image['hash']] ?? 'products/kaspi/'.$product->id.'/'.$image['hash'].'.'.$image['extension'];
                     if (! $disk->exists($path)) {
                         $created[] = $path;
                         if (! $disk->put($path, $image['bytes'])) {

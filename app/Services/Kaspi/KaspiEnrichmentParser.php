@@ -59,7 +59,7 @@ class KaspiEnrichmentParser
         if (trim($html) === '' || strlen($html) > 4000000 || ! mb_check_encoding($html, 'UTF-8')) {
             throw new \RuntimeException('parser_empty_or_invalid_html');
         }
-        if ($url !== KaspiSingleProductPolicy::URL) {
+        if (! is_string($url) || KaspiUrlRules::product($url) !== $url) {
             throw new \RuntimeException('wrong_product');
         }
         $dom = new DOMDocument;
@@ -80,11 +80,12 @@ class KaspiEnrichmentParser
         $jsonDom->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
         libxml_clear_errors();
         libxml_use_internal_errors($previous);
-        $jsonLd = $this->jsonLd(new DOMXPath($jsonDom));
+        $jsonLd = $this->jsonLd(new DOMXPath($jsonDom), $url);
         $item = $this->backendItem($html);
+        preg_match('/-([0-9]+)\/$/D', $url, $identity);
         foreach (['card.id', 'card.code'] as $key) {
             $id = data_get($item, $key);
-            if ($id !== null && (string) $id !== '142775620') {
+            if ($id !== null && (string) $id !== $identity[1]) {
                 throw new \RuntimeException('wrong_product');
             }
         }
@@ -670,10 +671,10 @@ class KaspiEnrichmentParser
         return $this->nodeText($nodes?->item(0));
     }
 
-    private function jsonLd(DOMXPath $xpath): array
+    private function jsonLd(DOMXPath $xpath, string $url): array
     {
         $items = [];
-        $visit = function (array $entry) use (&$visit, &$items): void {
+        $visit = function (array $entry) use (&$visit, &$items, $url): void {
             if (array_is_list($entry)) {
                 foreach ($entry as $child) {
                     if (is_array($child)) {
@@ -689,7 +690,7 @@ class KaspiEnrichmentParser
             if (! in_array('Product', (array) ($entry['@type'] ?? []), true)) {
                 return;
             }
-            if (isset($entry['url']) && (! is_string($entry['url']) || KaspiUrlRules::product($entry['url']) !== KaspiSingleProductPolicy::URL)) {
+            if (isset($entry['url']) && (! is_string($entry['url']) || KaspiUrlRules::product($entry['url']) !== $url)) {
                 return;
             }
             // Keep only content fields. Offers and stock are never part of parser output.

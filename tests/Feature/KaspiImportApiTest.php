@@ -22,7 +22,7 @@ class KaspiImportApiTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['services.kaspi.internal_api_token' => 'test-secret', 'services.kaspi.merchant_id' => 'Avtoximiya', 'services.kaspi.city_id' => '750000000']);
+        config(['services.kaspi.production_base_url' => 'https://autohimiki.kz', 'services.kaspi.internal_api_token' => 'test-secret', 'services.kaspi.merchant_id' => 'Avtoximiya', 'services.kaspi.city_id' => '750000000']);
         foreach (['2025_01_001_create_categories_table.php', '2025_01_002_create_brands_table.php', '2025_01_003_create_products_table.php', '2025_01_004_create_product_images_table.php'] as $migration) {
             (require database_path('migrations/'.$migration))->up();
         }
@@ -69,7 +69,7 @@ class KaspiImportApiTest extends TestCase
     {
         $payload = $this->payload();
         $payload['sku'] = 'other';
-        $this->withToken('test-secret')->postJson(self::ENDPOINT, $payload)->assertUnprocessable()->assertJsonPath('error', 'sku_not_allowed_for_kaspi_1c');
+        $this->withToken('test-secret')->postJson(self::ENDPOINT, $payload)->assertNotFound()->assertJsonPath('error', 'active_product_not_found');
         DB::table('products')->where('id', $this->id)->update(['is_active' => false]);
         $this->postJson(self::ENDPOINT, $this->payload())->assertNotFound();
         DB::table('products')->where('id', $this->id)->update(['is_active' => true, 'slug' => 'wrong']);
@@ -188,7 +188,7 @@ class KaspiImportApiTest extends TestCase
     {
         $this->withoutMiddleware(ThrottleRequests::class);
         $this->withToken('test-secret');
-        foreach (['sku' => ' '.Policy::SKU.' ', 'kaspi_url' => str_replace('142775620', '123', Policy::URL), 'storefront_url' => Policy::STOREFRONT.'-other'] as $key => $value) {
+        foreach (['sku' => ' '.Policy::SKU.' ', 'kaspi_url' => 'https://evil.test/shop/p/other-123/'] as $key => $value) {
             $this->postJson(self::ENDPOINT, array_replace($this->payload(), [$key => $value]))->assertUnprocessable();
         }
         foreach (['captcha' => true, 'resolver_verified' => false, 'merchant_id' => 'wrong', 'city_id' => 'wrong'] as $key => $value) {
@@ -196,7 +196,7 @@ class KaspiImportApiTest extends TestCase
             $payload['source'][$key] = $value;
             $this->postJson(self::ENDPOINT, $payload)->assertUnprocessable();
         }
-        $lock = Cache::lock('kaspi-1c-import-'.Policy::SKU, 300);
+        $lock = Cache::lock('kaspi-1c-import-'.hash('sha256', Policy::SKU), 300);
         $this->assertTrue($lock->get());
         try {
             $this->postJson(self::ENDPOINT, $this->payload())->assertStatus(409)->assertJsonPath('error', 'import_in_progress');
@@ -208,12 +208,12 @@ class KaspiImportApiTest extends TestCase
 
     public function test_valid_manual_main_kept_while_new_gallery_added_and_db_failure_cleans_files(): void
     {
-        Storage::disk('public')->put('manual.png', 'manual image bytes');
+        Storage::disk('public')->put('manual.png', $this->bytes());
         DB::table('products')->where('id', $this->id)->update(['main_image' => 'manual.png', 'main_image_webp' => null]);
         Http::fake(['*' => Http::response($this->bytes())]);
         $this->withToken('test-secret')->postJson(self::ENDPOINT, $this->payload())->assertOk()->assertJsonPath('gallery_added', 1)->assertJsonPath('main_image', 'preserved');
         $this->assertSame('manual.png', DB::table('products')->value('main_image'));
-        $this->assertSame('manual image bytes', Storage::disk('public')->get('manual.png'));
+        $this->assertSame($this->bytes(), Storage::disk('public')->get('manual.png'));
     }
 
     public function test_database_insert_failure_removes_new_file(): void
@@ -229,7 +229,7 @@ class KaspiImportApiTest extends TestCase
 
     public function test_empty_attributes_import_seven_pairs_and_repeat_preserves_product_and_gallery(): void
     {
-        DB::table('products')->where('id', $this->id)->update(['attributes' => null]);
+        DB::table('products')->where('id', $this->id)->update(['attributes' => 'null']);
         Http::fake(['*' => Http::response($this->bytes())]);
         $payload = $this->payload();
         $expected = ['Применение' => 'двигатель', 'Консистенция' => 'жидкость', 'Очистка' => 'грязь',
@@ -280,5 +280,38 @@ class KaspiImportApiTest extends TestCase
             $this->withToken('test-secret')->postJson(self::ENDPOINT, $payload)->assertUnprocessable();
         }
         Http::assertNothingSent();
+    }
+
+    public function test_arbitrary_existing_sku_import_is_protected_idempotent_and_bound_to_its_storefront(): void
+    {
+        DB::table('products')->where('id', $this->id)->update(['sku' => 'РТ-00000074', 'slug' => 'other-product']);
+        $payload = $this->payload();
+        $payload['sku'] = 'РТ-00000074';
+        $payload['storefront_url'] = 'https://autohimiki.kz/product/other-product';
+        $payload['kaspi_url'] = 'https://kaspi.kz/shop/p/other-product-123456/';
+        $payload['content']['attributes'] = [['name' => 'Объем', 'value' => '1 л']];
+        $before = (array) DB::table('products')->first();
+        Http::fake(['*' => Http::response($this->bytes())]);
+        $this->withToken('test-secret')->postJson(self::ENDPOINT, $payload)->assertOk()->assertJsonPath('sku', 'РТ-00000074');
+        $after = (array) DB::table('products')->first();
+        foreach ($before as $key => $value) {
+            if (! in_array($key, ['main_image', 'main_image_webp', 'attributes'], true)) {
+                $this->assertSame($value, $after[$key], $key);
+            }
+        }
+        $this->postJson(self::ENDPOINT, $payload)->assertOk()->assertJsonPath('status', 'unchanged')->assertJsonPath('gallery_added', 0)->assertJsonPath('attributes_added', 0);
+        $this->assertSame($after, (array) DB::table('products')->first());
+        $this->assertCount(1, Storage::disk('public')->allFiles());
+        $payload['storefront_url'] = Policy::STOREFRONT;
+        $this->postJson(self::ENDPOINT, $payload)->assertStatus(409)->assertJsonPath('error', 'storefront_mismatch');
+    }
+
+    public function test_existing_non_image_main_file_is_replaced_without_deleting_old_file(): void
+    {
+        Storage::disk('public')->put('broken.jpg', '<html>missing image</html>');
+        DB::table('products')->where('id', $this->id)->update(['main_image' => 'broken.jpg']);
+        Http::fake(['*' => Http::response($this->bytes())]);
+        $this->withToken('test-secret')->postJson(self::ENDPOINT, $this->payload())->assertOk()->assertJsonPath('main_image', 'replaced');
+        Storage::disk('public')->assertExists('broken.jpg');
     }
 }
