@@ -11,12 +11,22 @@ class KaspiLocalNodeProcessRunner
 
     public function run(array $arguments): array
     {
+        return $this->execute('kaspi-widget-resolver.mjs', $arguments, 100);
+    }
+
+    public function collect(array $arguments): array
+    {
+        return $this->execute('kaspi-product-page-collector.mjs', $arguments, 150);
+    }
+
+    private function execute(string $script, array $arguments, int $timeout): array
+    {
         $this->guard->assertAllowed();
-        $command = [(string) config('services.kaspi.node_binary', 'node'), base_path('scripts/kaspi-widget-resolver.mjs')];
+        $command = [(string) config('services.kaspi.node_binary', 'node'), base_path('scripts/'.$script)];
         foreach ($arguments as $name => $value) {
             $command[] = '--'.$name.'='.$value;
         }
-        $process = new Process($command, base_path(), $this->browserEnvironment(), null, 100);
+        $process = new Process($command, base_path(), $this->browserEnvironment(), null, $timeout);
         try {
             $process->run();
         } catch (ProcessTimedOutException) {
