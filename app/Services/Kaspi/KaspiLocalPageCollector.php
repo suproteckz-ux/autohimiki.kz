@@ -9,7 +9,7 @@ class KaspiLocalPageCollector
     public function collectUrl(string $url): array
     {
         $this->guard->assertAllowed();
-        if ($url !== KaspiSingleProductPolicy::URL) {
+        if (KaspiUrlRules::product($url) !== $url) {
             throw new \RuntimeException('wrong_product');
         }
         $process = $this->runner->collect(['url' => $url, 'headless' => 'false']);

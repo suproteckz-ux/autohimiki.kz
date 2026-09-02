@@ -33,8 +33,8 @@ class KaspiProductionPayloadValidator
             'content.images' => ['required', 'array', 'list', 'min:1', 'max:12'],
             'content.images.*' => ['required', 'string', 'max:2048', 'distinct:strict'],
         ])->validate();
-        if (($data['version'] !== 1) || $data['storefront_url'] !== KaspiSingleProductPolicy::STOREFRONT
-            || $data['kaspi_url'] !== KaspiSingleProductPolicy::URL
+        if (($data['version'] !== 1) || ! KaspiUrlRules::storefront($data['storefront_url'])
+            || KaspiUrlRules::product($data['kaspi_url']) !== $data['kaspi_url']
             || $data['source']['resolver_verified'] !== true || $data['source']['captcha'] !== false
             || trim((string) config('services.kaspi.merchant_id')) === ''
             || trim((string) config('services.kaspi.city_id')) === ''

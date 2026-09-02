@@ -70,15 +70,15 @@ class KaspiContentLocalTest extends TestCase
         $collector->collectUrl(Policy::URL);
     }
 
-    public function test_missing_or_other_sku_refused_before_any_work(): void
+    public function test_missing_mode_or_invalid_sku_refused_before_any_work(): void
     {
         Http::preventStrayRequests();
         $bridge = Mockery::mock(KaspiProductionBridgeService::class);
         $bridge->shouldNotReceive('prepare');
         $bridge->shouldNotReceive('send');
         $this->app->instance(KaspiProductionBridgeService::class, $bridge);
-        $this->artisan('kaspi:push-production')->expectsOutput('sku_not_allowed_for_kaspi_1c')->assertFailed();
-        $this->artisan('kaspi:push-production', ['--sku' => '680'])->expectsOutput('sku_not_allowed_for_kaspi_1c')->assertFailed();
+        $this->artisan('kaspi:push-production')->expectsOutput('select_exactly_one_mode_sku_limit_all')->assertFailed();
+        $this->artisan('kaspi:push-production', ['--sku' => ' '])->expectsOutput('invalid_exact_sku')->assertFailed();
     }
 
     public function test_dry_run_never_sends_and_live_command_sends_prepared_payload(): void
@@ -103,5 +103,16 @@ class KaspiContentLocalTest extends TestCase
         $this->assertSame(['https://resources.cdn-kaspi.kz/img/m/p/correct.png'], $parsed['images']);
         $this->assertArrayNotHasKey('offers', $parsed);
         $this->assertFalse(Policy::imageUrl('https://resources.cdn-kaspi.kz/img/m/p/%2e%2e/private.png'));
+    }
+
+    public function test_parser_accepts_other_resolved_product_id_but_rejects_mismatched_html(): void
+    {
+        $url = 'https://kaspi.kz/shop/p/other-product-987654/';
+        $html = str_replace('142775620', '987654', $this->html());
+        $result = app(KaspiEnrichmentParser::class)->parse($html, $url);
+        $this->assertSame($url, $result['url']);
+        $this->assertCount(1, $result['images']);
+        $this->expectExceptionMessage('wrong_product');
+        app(KaspiEnrichmentParser::class)->parse($this->html(), $url);
     }
 }

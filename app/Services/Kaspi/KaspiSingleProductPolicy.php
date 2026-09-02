@@ -2,8 +2,11 @@
 
 namespace App\Services\Kaspi;
 
+use Illuminate\Support\Facades\Storage;
+
 class KaspiSingleProductPolicy
 {
+    // Original verified fixture; runtime validation is per candidate, never an allow-list.
     public const SKU = '00000000680';
 
     public const SLUG = 'foam-cleaner-mitsuji-universalnyy-pennyy-ochistitel';
@@ -14,8 +17,22 @@ class KaspiSingleProductPolicy
 
     public static function assertSku(mixed $sku): void
     {
-        if ($sku !== self::SKU) {
-            throw new \RuntimeException('sku_not_allowed_for_kaspi_1c', 422);
+        if (! is_string($sku) || trim($sku) === '' || trim($sku) !== $sku || mb_strlen($sku) > 255 || preg_match('/[\x00-\x1f\x7f]/u', $sku)) {
+            throw new \RuntimeException('invalid_exact_sku', 422);
+        }
+    }
+
+    public static function mainImageExists(?string $path): bool
+    {
+        if (! is_string($path) || $path === '' || str_contains($path, '..') || preg_match('#^(?:/|[a-z]+:)|\\\\#i', $path)) {
+            return false;
+        }
+        try {
+            $disk = Storage::disk('public');
+
+            return $disk->exists($path) && @getimagesize($disk->path($path)) !== false;
+        } catch (\Throwable) {
+            return false;
         }
     }
 
