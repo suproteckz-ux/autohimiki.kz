@@ -4,252 +4,100 @@ namespace App\Services\Import;
 
 use App\Models\ImportBatch;
 use App\Models\ImportError;
-use App\Models\Product;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
-/**
- * PriceStockUpdater
- *
- * Режим импорта: prices_only (обновление из 1С).
- *
- * ОБНОВЛЯЕТ ТОЛЬКО:
- *   - price
- *   - quantity
- *   - in_stock
- *
- * НЕ ТРОГАЕТ:
- *   - name, slug, brand, category, description
- *   - attributes, faq, images, SEO-поля
- *
- * Если SKU не найден → запись в import_errors, НЕ создаёт товар.
- */
+/** Shared manual/automatic prices_only core. Never creates or edits product content. */
 class PriceStockUpdater
 {
-    // Максимальный процент изменения цены — предупреждение в лог
-    private const PRICE_CHANGE_WARN_THRESHOLD = 50;
+    public function __construct(private readonly ImportBatch $batch) {}
 
-    public function __construct(
-        private readonly ImportBatch $batch
-    ) {}
-
-    /**
-     * Обрабатывает один чанк строк.
-     *
-     * @param  array[] $rows  Строки после маппинга колонок
-     * @return array{updated: int, not_found: int, errors: int}
-     */
-    public function processChunk(array $rows): array
+    public function planRow(array $row, bool $lock = false): array
     {
-        $stats = ['updated' => 0, 'not_found' => 0, 'errors' => 0];
-
-        $priceChanges = [];
-        $stockChanges = [];
-
-        foreach ($rows as $rowNumber => $row) {
+        $sku = $row['sku'] ?? null;
+        if (! is_string($sku) || trim($sku) === '') {
+            throw new \RuntimeException('Commercial SKU must be a non-empty string.');
+        }
+        $sku = trim($sku);
+        $query = DB::table('products')->where('sku', $sku);
+        $products = ($lock ? $query->lockForUpdate() : $query)->get();
+        if ($products->count() > 1) {
+            throw new \RuntimeException("Conflicting target SKU: {$sku}");
+        }
+        $product = $products->first();
+        $diagnostics = [];
+        $price = $quantity = null;
+        foreach (['price', 'quantity'] as $field) {
             try {
-                $result = $this->processRow($row, $rowNumber);
-
-                match ($result['status']) {
-                    'updated'   => $stats['updated']++,
-                    'not_found' => $stats['not_found']++,
-                    default     => null,
-                };
-
-                if ($result['price_changed'] ?? false) {
-                    $priceChanges[] = $result['price_change'];
+                $$field = CommercialValues::$field($row[$field] ?? null);
+                if ($$field === null) {
+                    $diagnostics[] = "Blank {$field}; existing value preserved.";
                 }
-                if ($result['stock_changed'] ?? false) {
-                    $stockChanges[] = $result['stock_change'];
-                }
-
-            } catch (\Throwable $e) {
-                $stats['errors']++;
-                $this->logError($rowNumber, $row['sku'] ?? null, $e->getMessage(), $row);
-                Log::warning("ImportChunk error row {$rowNumber}: " . $e->getMessage());
+            } catch (\InvalidArgumentException $e) {
+                $diagnostics[] = "{$field}: ".$e->getMessage();
             }
         }
+        $base = ['sku' => $sku, 'row_number' => (int) ($row['__row'] ?? 0), 'diagnostics' => $diagnostics];
+        // Do not let database collation silently match a different SKU.
+        if (! $product || $product->sku !== $sku) {
+            return $base + ['status' => 'not_found', 'product_id' => null, 'before' => null, 'after' => null];
+        }
+        $before = ['price' => number_format((float) $product->price, 2, '.', ''),
+            'quantity' => (int) $product->quantity, 'in_stock' => (bool) $product->in_stock];
+        $after = $before;
+        if ($price !== null) {
+            $after['price'] = $price;
+        }
+        if ($quantity !== null) {
+            $after['quantity'] = $quantity;
+            $after['in_stock'] = $quantity > 0;
+        }
 
-        // Атомарно обновляем счётчики batch
-        DB::table('import_batches')
-            ->where('id', $this->batch->id)
-            ->increment('updated_count', $stats['updated']);
+        return $base + ['status' => $before === $after ? 'unchanged' : 'updated',
+            'product_id' => $product->id, 'before' => $before, 'after' => $after];
+    }
 
-        DB::table('import_batches')
-            ->where('id', $this->batch->id)
-            ->increment('not_found_count', $stats['not_found']);
+    public function processChunk(array $rows): array
+    {
+        if (DB::transactionLevel() === 0 || ! $this->batch->onec_file_id) {
+            throw new \LogicException('Commercial writes require the locked file-ledger transaction.');
+        }
+        $stats = ['updated' => 0, 'not_found' => 0, 'errors' => 0, 'skipped' => 0];
+        foreach ($rows as $row) {
+            if (DB::table('import_commercial_rows')->where('onec_file_id', $this->batch->onec_file_id)
+                ->where('sku', $row['sku'])->exists()) {
+                $stats['skipped']++;
 
-        DB::table('import_batches')
-            ->where('id', $this->batch->id)
-            ->increment('error_count', $stats['errors']);
-
-        // Сохраняем изменения цен/остатков в batch (append к существующим)
-        if (! empty($priceChanges) || ! empty($stockChanges)) {
-            $this->appendChanges($priceChanges, $stockChanges);
+                continue;
+            }
+            $plan = $this->planRow($row, true);
+            if ($plan['status'] === 'updated') {
+                // Query Builder avoids observers AND updated_at changes.
+                DB::table('products')->where('id', $plan['product_id'])->update($plan['after']);
+                $stats['updated']++;
+            } elseif ($plan['status'] === 'not_found') {
+                $stats['not_found']++;
+                $plan['diagnostics'][] = 'Unknown exact SKU; product not created.';
+            } else {
+                $stats['skipped']++;
+            }
+            foreach ($plan['diagnostics'] as $message) {
+                ImportError::create(['import_batch_id' => $this->batch->id,
+                    'row_number' => $plan['row_number'], 'sku' => $plan['sku'],
+                    'message' => $message, 'row_data' => $row]);
+            }
+            $stats['errors'] += count($plan['diagnostics']) > 0 ? 1 : 0;
+            DB::table('import_commercial_rows')->insert([
+                'onec_file_id' => $this->batch->onec_file_id, 'import_batch_id' => $this->batch->id,
+                'product_id' => $plan['product_id'], 'sku' => $plan['sku'], 'row_number' => $plan['row_number'],
+                'status' => $plan['status'], 'before_values' => json_encode($plan['before']),
+                'after_values' => json_encode($plan['after']), 'diagnostics' => json_encode($plan['diagnostics']),
+                'created_at' => now(),
+            ]);
+        }
+        foreach (['updated' => 'updated_count', 'not_found' => 'not_found_count', 'errors' => 'error_count', 'skipped' => 'skipped_count'] as $key => $field) {
+            DB::table('import_batches')->where('id', $this->batch->id)->increment($field, $stats[$key]);
         }
 
         return $stats;
-    }
-
-    /**
-     * Обрабатывает одну строку.
-     */
-    private function processRow(array $row, int $rowNumber): array
-    {
-        $sku = trim($row['sku'] ?? '');
-
-        // Валидация SKU
-        if (empty($sku)) {
-            $this->logError($rowNumber, null, 'Пустой SKU', $row);
-            return ['status' => 'error'];
-        }
-
-        // Поиск товара по SKU
-        $product = Product::where('sku', $sku)->first();
-
-        if (! $product) {
-            // SKU не найден — записываем в ошибки, НЕ создаём товар
-            $this->logError(
-                $rowNumber,
-                $sku,
-                "SKU «{$sku}» не найден в базе. В режиме обновления из 1С товар не создаётся.",
-                $row
-            );
-            return ['status' => 'not_found'];
-        }
-
-        // Подготавливаем новые значения
-        $newPrice    = isset($row['price']) ? (float) $row['price'] : null;
-        $newQuantity = isset($row['quantity']) ? (int) $row['quantity'] : null;
-
-        // Проверяем что есть что обновлять
-        if ($newPrice === null && $newQuantity === null) {
-            $this->logError($rowNumber, $sku, 'Нет данных для обновления (price и quantity пусты)', $row);
-            return ['status' => 'error'];
-        }
-
-        $updateData   = [];
-        $priceChanged = false;
-        $stockChanged = false;
-        $priceChange  = null;
-        $stockChange  = null;
-
-        // ── Обновление цены ────────────────────────────────────────
-        if ($newPrice !== null && $newPrice >= 0) {
-            $oldPrice = (float) $product->price;
-
-            if ($newPrice !== $oldPrice) {
-                $updateData['price'] = $newPrice;
-                $priceChanged = true;
-                $priceChange  = [
-                    'sku'  => $sku,
-                    'name' => $product->name,
-                    'old'  => $oldPrice,
-                    'new'  => $newPrice,
-                    'diff' => round($newPrice - $oldPrice, 2),
-                    'pct'  => $oldPrice > 0
-                        ? round(($newPrice - $oldPrice) / $oldPrice * 100, 1)
-                        : null,
-                ];
-
-                // Предупреждение о резком изменении цены
-                if ($priceChange['pct'] !== null
-                    && abs($priceChange['pct']) >= self::PRICE_CHANGE_WARN_THRESHOLD
-                ) {
-                    Log::warning("Import: резкое изменение цены SKU {$sku}", $priceChange);
-                }
-            }
-        }
-
-        // ── Обновление остатка ─────────────────────────────────────
-        if ($newQuantity !== null) {
-            $oldQuantity = (int) $product->quantity;
-            $newInStock  = $newQuantity > 0;
-
-            if ($newQuantity !== $oldQuantity) {
-                $updateData['quantity'] = $newQuantity;
-                $updateData['in_stock'] = $newInStock;
-                $stockChanged = true;
-                $stockChange  = [
-                    'sku'      => $sku,
-                    'name'     => $product->name,
-                    'old'      => $oldQuantity,
-                    'new'      => $newQuantity,
-                    'in_stock' => $newInStock,
-                ];
-            } elseif ($newInStock !== (bool) $product->in_stock) {
-                // Остаток не изменился, но статус наличия изменился
-                $updateData['in_stock'] = $newInStock;
-            }
-        }
-
-        // Обновляем только если есть изменения
-        if (! empty($updateData)) {
-            // Используем Query Builder без Eloquent — не триггерит Observer,
-            // не обновляет updated_at неожиданно, максимально быстро
-            Product::where('id', $product->id)->update($updateData);
-        }
-
-        return [
-            'status'        => 'updated',
-            'price_changed' => $priceChanged,
-            'stock_changed' => $stockChanged,
-            'price_change'  => $priceChange,
-            'stock_change'  => $stockChange,
-        ];
-    }
-
-    /**
-     * Записывает ошибку в таблицу import_errors.
-     */
-    private function logError(
-        int    $rowNumber,
-        ?string $sku,
-        string  $message,
-        array   $rowData
-    ): void {
-        ImportError::create([
-            'import_batch_id' => $this->batch->id,
-            'row_number'      => $rowNumber,
-            'sku'             => $sku,
-            'message'         => $message,
-            'row_data'        => $rowData,
-        ]);
-    }
-
-    /**
-     * Добавляет изменения цен/остатков к JSON-полям batch.
-     * Использует JSON_ARRAY_APPEND через сырой SQL для атомарности.
-     */
-    private function appendChanges(array $priceChanges, array $stockChanges): void
-    {
-        if (! empty($priceChanges)) {
-            // Читаем текущие, добавляем новые, сохраняем
-            // Делаем через PHP для совместимости с MySQL 5.7+
-            $batch = ImportBatch::find($this->batch->id);
-            $existing = $batch->price_changes ?? [];
-            $merged   = array_merge($existing, $priceChanges);
-
-            // Лимит хранения — последние 1000 изменений цен
-            if (count($merged) > 1000) {
-                $merged = array_slice($merged, -1000);
-            }
-
-            ImportBatch::where('id', $this->batch->id)
-                ->update(['price_changes' => json_encode($merged)]);
-        }
-
-        if (! empty($stockChanges)) {
-            $batch    = ImportBatch::find($this->batch->id);
-            $existing = $batch->stock_changes ?? [];
-            $merged   = array_merge($existing, $stockChanges);
-
-            if (count($merged) > 1000) {
-                $merged = array_slice($merged, -1000);
-            }
-
-            ImportBatch::where('id', $this->batch->id)
-                ->update(['stock_changes' => json_encode($merged)]);
-        }
     }
 }
