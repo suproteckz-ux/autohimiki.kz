@@ -4,6 +4,12 @@ use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 
+// Only enable after manual dry-run and one-SKU verification. Plesk schedule:run
+// OR a supervisor scheduler, never both. The DB lock also serializes manual runs.
+if (config('onec.scheduled', false)) {
+    Schedule::command('onec:sync')->everyFiveMinutes()->withoutOverlapping(30);
+}
+
 // ════════════════════════════════════════════════════════════════
 // Расписание задач autohimiki.kz
 // Запускается через: php artisan schedule:work (supervisor)
@@ -123,10 +129,12 @@ Schedule::call(function () {
 // ── Очистка старых batch-записей импорта ─────────────────────
 Schedule::call(function () {
     $count = \App\Models\ImportBatch::where('created_at', '<', now()->subDays(90))
+        ->whereNull('source')
         ->where('status', 'done')
         ->count();
 
     \App\Models\ImportBatch::where('created_at', '<', now()->subDays(90))
+        ->whereNull('source')
         ->where('status', 'done')
         ->delete();
 

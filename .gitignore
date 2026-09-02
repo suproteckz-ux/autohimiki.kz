@@ -19,3 +19,8 @@ yarn-error.log
 /storage/backups
 /storage/logs
 /storage/app/public/imports
+/storage/app/private/onec
+/storage/framework/testing
+/bootstrap/cache/*.php
+/storage/framework/cache/*
+/storage/framework/views/*

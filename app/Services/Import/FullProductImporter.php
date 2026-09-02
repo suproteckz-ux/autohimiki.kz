@@ -119,10 +119,11 @@ class FullProductImporter
                 'sku'               => $sku,
                 'category_id'       => $categoryId,
                 'brand_id'          => $this->resolveBrand($row['brand'] ?? null),
-                'price'             => (float) ($row['price'] ?? 0),
+                // Only 1C establishes commercial values.
+                'price'             => 0,
                 'old_price'         => isset($row['old_price']) ? (float) $row['old_price'] : null,
-                'quantity'          => (int) ($row['quantity'] ?? 0),
-                'in_stock'          => ((int) ($row['quantity'] ?? 0)) > 0,
+                'quantity'          => 0,
+                'in_stock'          => false,
                 'short_description' => $row['short_description'] ?? null,
                 'description'       => $row['description'] ?? null,
                 'meta_title'        => $row['meta_title'] ?? null,
@@ -144,15 +145,8 @@ class FullProductImporter
             }
 
             // Цена и остаток
-            if (isset($row['price'])) {
-                $updateData['price'] = (float) $row['price'];
-            }
             if (isset($row['old_price'])) {
                 $updateData['old_price'] = (float) $row['old_price'];
-            }
-            if (isset($row['quantity'])) {
-                $updateData['quantity'] = (int) $row['quantity'];
-                $updateData['in_stock'] = ((int) $row['quantity']) > 0;
             }
 
             // Описание (обновляем только если передано)

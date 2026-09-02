@@ -70,7 +70,7 @@ class ColumnMapper
      */
     public function mapRow(array $row, array $columnMap): array
     {
-        $mapped = [];
+        $mapped = ['__row' => $row['__row'] ?? 0];
 
         foreach ($columnMap as $systemField => $fileColumn) {
             if (empty($fileColumn)) {
@@ -78,7 +78,9 @@ class ColumnMapper
             }
 
             $value = $row[$fileColumn] ?? null;
-            $mapped[$systemField] = $this->castValue($systemField, $value);
+            // Commercial validation happens in PriceStockUpdater, independently per field.
+            $mapped[$systemField] = in_array($systemField, ['price', 'quantity'], true)
+                ? $value : $this->castValue($systemField, $value);
         }
 
         return $mapped;
@@ -127,17 +129,6 @@ class ColumnMapper
      */
     private function parsePrice(mixed $value): float
     {
-        // Убираем пробелы, знаки валют, буквы
-        $clean = preg_replace('/[^\d.,]/', '', (string) $value);
-
-        // Если запятая — десятичный разделитель
-        if (str_contains($clean, ',') && ! str_contains($clean, '.')) {
-            $clean = str_replace(',', '.', $clean);
-        } else {
-            // Убираем запятые как разделители тысяч
-            $clean = str_replace(',', '', $clean);
-        }
-
-        return round((float) $clean, 2);
+        return (float) CommercialValues::price($value);
     }
 }

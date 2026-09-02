@@ -78,9 +78,15 @@ class ImportWizardPage extends Page
         try {
             $parser = new ImportFileParser();
 
-            $allRows          = $parser->parse($this->filePath);
+            // Preview precedes the mode selector: preserve generic full-import uploads.
+            // Commercial apply always revalidates the complete fixed XLSX contract.
+            try {
+                $allRows = $parser->parseCommercial(Storage::disk('public')->path($this->filePath));
+            } catch (\RuntimeException $e) {
+                $allRows = $parser->parse($this->filePath);
+            }
             $this->totalRows  = count($allRows);
-            $this->fileColumns = $parser->getColumns($this->filePath);
+            $this->fileColumns = array_values(array_diff(array_keys($allRows[0] ?? []), ['__row']));
             $this->previewRows = array_slice($allRows, 0, 20);
 
             // Авто-определение маппинга
@@ -211,9 +217,17 @@ class ImportWizardPage extends Page
      */
     public function startImport(): void
     {
+        if (! in_array($this->importMode, ['prices_only', 'full'], true)) {
+            throw new \InvalidArgumentException('Invalid import mode.');
+        }
+        if ($this->importMode === 'prices_only') {
+            $this->columnMap = [
+                'sku' => 'Номенклатура.Код', 'price' => 'Розничная цена', 'quantity' => 'Остаток на складе',
+            ];
+        }
         // Обязательные поля для каждого режима
         $required = $this->importMode === 'prices_only'
-            ? ['sku', 'price']
+            ? ['sku', 'price', 'quantity']
             : ['sku', 'name'];
 
         foreach ($required as $field) {
@@ -284,6 +298,13 @@ class ImportWizardPage extends Page
             "import_progress_{$this->batchId}",
             ['percent' => 0, 'status' => 'processing']
         );
+
+        $currentBatch = ImportBatch::find($this->batchId);
+        if ($currentBatch && in_array($currentBatch->status, ['done', 'failed'], true)) {
+            $this->progress = ['status' => $currentBatch->status,
+                'percent' => $currentBatch->status === 'done' ? 100 : 0,
+                'batch' => $currentBatch->toArray()];
+        }
 
         // Если завершён — загружаем итоговую статистику
         if (($this->progress['status'] ?? '') === 'done') {

@@ -9,103 +9,58 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-/**
- * FinalizeImportJob
- *
- * Завершение импорта:
- * - Ставит статус batch в 'done'
- * - Сбрасывает кэш каталога и sitemap
- * - Логирует статистику
- * - Обновляет прогресс в Cache до 100%
- *
- * ИСПРАВЛЕНИЕ LA-2:
- * Класс перенесён из FinalizeAndDownloadJobs.php в отдельный файл.
- * Laravel autoloader ожидает один класс на файл.
- * Два класса в одном файле → Class not found при dispatch().
- */
 class FinalizeImportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries   = 3;
-    public int $timeout = 60;
-
-    public function __construct(
-        public readonly int $batchId
-    ) {}
+    public function __construct(public readonly int $batchId) {}
 
     public function handle(): void
     {
-        $batch = ImportBatch::findOrFail($this->batchId);
-
-        // Проверяем — не завершён ли уже
-        if ($batch->status === 'done') {
-            Log::info("FinalizeImportJob #{$this->batchId}: already done, skipping");
-            return;
-        }
-
-        // Если не все чанки обработаны — откладываем финализацию
-        if (
-            $batch->total_chunks > 0
-            && isset($batch->processed_chunks)
-            && $batch->processed_chunks < $batch->total_chunks
-        ) {
-            $remaining = $batch->total_chunks - $batch->processed_chunks;
-            Log::info("FinalizeJob #{$this->batchId}: {$remaining} chunks pending, rescheduling");
-
-            self::dispatch($this->batchId)
-                ->onQueue('imports-low')
-                ->delay(now()->addSeconds(30));
-            return;
-        }
-
-        // Финализируем
-        $batch->update([
-            'status'      => 'done',
-            'finished_at' => now(),
-        ]);
-
-        // Сбрасываем весь кэш сайта
-        CacheService::forgetAll();
-
-        // Финальное обновление прогресса
-        \Illuminate\Support\Facades\Cache::put(
-            "import_progress_{$this->batchId}",
-            [
-                'total'     => 100,
-                'processed' => 100,
-                'percent'   => 100,
-                'status'    => 'done',
-            ],
-            3600
-        );
-
-        $batch->refresh();
-
-        Log::info("Import #{$this->batchId} completed", [
-            'type'       => $batch->type,
-            'file'       => $batch->filename,
-            'total_rows' => $batch->total_rows,
-            'created'    => $batch->created_count,
-            'updated'    => $batch->updated_count,
-            'skipped'    => $batch->skipped_count,
-            'not_found'  => $batch->not_found_count,
-            'errors'     => $batch->error_count,
-            'duration'   => $batch->duration,
-        ]);
-    }
-
-    public function failed(\Throwable $e): void
-    {
-        ImportBatch::where('id', $this->batchId)->update([
-            'status'      => 'failed',
-            'finished_at' => now(),
-        ]);
-
-        Log::error("FinalizeImportJob #{$this->batchId} failed permanently", [
-            'error' => $e->getMessage(),
-        ]);
+        DB::transaction(function () {
+            $batch = ImportBatch::whereKey($this->batchId)->lockForUpdate()->firstOrFail();
+            if ($batch->status !== 'processing') {
+                return;
+            }
+            $receipts = DB::table('import_chunks')->where('import_batch_id', $batch->id)->count();
+            if ((int) $batch->processed_chunks !== (int) $batch->total_chunks || $receipts !== (int) $batch->total_chunks) {
+                throw new \RuntimeException('Cannot finalize incomplete import chunks.');
+            }
+            $summary = ['status' => 'done', 'finished_at' => now()];
+            if ($batch->source === 'onec') {
+                // Retain the existing admin preview; the unabridged rollback journal is relational.
+                $prices = $stocks = [];
+                $changes = DB::table('import_commercial_rows as r')->leftJoin('products as p', 'p.id', '=', 'r.product_id')
+                    ->where('r.import_batch_id', $batch->id)->where('r.status', 'updated')
+                    ->orderBy('r.id')->limit(1000)->get(['r.*', 'p.name']);
+                foreach ($changes as $change) {
+                    $before = json_decode($change->before_values, true);
+                    $after = json_decode($change->after_values, true);
+                    $base = ['sku' => $change->sku, 'name' => $change->name];
+                    if ($before['price'] !== $after['price']) {
+                        $prices[] = $base + ['old' => $before['price'], 'new' => $after['price'],
+                            'diff' => (float) $after['price'] - (float) $before['price']];
+                    }
+                    if ($before['quantity'] !== $after['quantity'] || $before['in_stock'] !== $after['in_stock']) {
+                        $stocks[] = $base + ['old' => $before['quantity'], 'new' => $after['quantity'], 'in_stock' => $after['in_stock']];
+                    }
+                }
+                $summary += ['price_changes' => $prices, 'stock_changes' => $stocks];
+            }
+            $batch->update($summary);
+            DB::afterCommit(function () use ($batch) {
+                try {
+                    CacheService::forgetAll();
+                    Cache::put($batch->progressCacheKey(), ['status' => 'done', 'percent' => 100,
+                        'total' => $batch->total_chunks, 'processed' => $batch->processed_chunks], 3600);
+                } catch (\Throwable $e) {
+                    Log::error('Import committed; cache invalidation failed', ['batch' => $batch->id, 'error' => $e->getMessage()]);
+                }
+            });
+        });
     }
 }
