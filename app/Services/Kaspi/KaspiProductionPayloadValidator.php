@@ -23,9 +23,13 @@ class KaspiProductionPayloadValidator
             'source.merchant_id' => ['required', 'string'],
             'source.city_id' => ['required', 'string'],
             'source.captcha' => ['required', 'boolean'],
-            'content' => ['required', 'array:title,description,images'],
+            'content' => ['required', 'array:title,description,images,attributes'],
             'content.title' => ['required', 'string', 'max:255'],
             'content.description' => ['present', 'nullable', 'string', 'max:65000'],
+            'content.attributes' => ['sometimes', 'array', 'list', 'max:80'],
+            'content.attributes.*' => ['array:name,value'],
+            'content.attributes.*.name' => ['present', 'nullable', 'string', 'max:120'],
+            'content.attributes.*.value' => ['present', 'nullable', 'string', 'max:1000'],
             'content.images' => ['required', 'array', 'list', 'min:1', 'max:12'],
             'content.images.*' => ['required', 'string', 'max:2048', 'distinct:strict'],
         ])->validate();
@@ -43,6 +47,23 @@ class KaspiProductionPayloadValidator
                 throw new \RuntimeException('image_url_not_allowed', 422);
             }
         }
+        $attributes = [];
+        $seen = [];
+        foreach ($data['content']['attributes'] ?? [] as $attribute) {
+            $name = trim(preg_replace('/\s+/u', ' ', (string) $attribute['name']) ?? '');
+            $value = trim((string) $attribute['value']);
+            $key = KaspiSingleProductPolicy::attributeKey($name);
+            if (in_array($key, ['price', 'old_price', 'quantity', 'in_stock', 'stock', 'availability', 'sku', 'slug', 'name',
+                'category', 'category_id', 'is_active', 'published', 'meta_title', 'meta_description', 'цена', 'остаток', 'остатки'], true)) {
+                throw new \RuntimeException('commercial_attribute_not_allowed', 422);
+            }
+            if ($key === '' || $value === '' || isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $attributes[] = ['name' => $name, 'value' => $value];
+        }
+        $data['content']['attributes'] = $attributes;
         $data['content']['description'] = KaspiSingleProductPolicy::description($data['content']['description']);
 
         return $data;

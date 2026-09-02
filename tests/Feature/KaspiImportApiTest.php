@@ -226,4 +226,59 @@ class KaspiImportApiTest extends TestCase
         $this->assertSame(0, DB::table('product_images')->count());
         $this->assertSame([], Storage::disk('public')->allFiles());
     }
+
+    public function test_empty_attributes_import_seven_pairs_and_repeat_preserves_product_and_gallery(): void
+    {
+        DB::table('products')->where('id', $this->id)->update(['attributes' => null]);
+        Http::fake(['*' => Http::response($this->bytes())]);
+        $payload = $this->payload();
+        $expected = ['Применение' => 'двигатель', 'Консистенция' => 'жидкость', 'Очистка' => 'грязь',
+            'Объем' => '0.65 л', 'Тип' => 'очиститель', 'Аэрозоль' => 'Да', 'Упаковка' => 'баллон'];
+        $payload['content']['attributes'] = [];
+        foreach ($expected as $name => $value) {
+            $payload['content']['attributes'][] = compact('name', 'value');
+        }
+        $before = (array) DB::table('products')->first();
+        $this->withToken('test-secret')->postJson(self::ENDPOINT, $payload)->assertOk()
+            ->assertJsonPath('attributes', 'updated')->assertJsonPath('attributes_added', 7)->assertJsonPath('description', 'preserved');
+        $after = (array) DB::table('products')->first();
+        $this->assertSame($expected, json_decode($after['attributes'], true));
+        foreach ($before as $key => $value) {
+            if (! in_array($key, ['attributes', 'main_image', 'main_image_webp'], true)) {
+                $this->assertSame($value, $after[$key], $key);
+            }
+        }
+        $images = DB::table('product_images')->get()->toJson();
+        $this->postJson(self::ENDPOINT, $payload)->assertOk()->assertJsonPath('status', 'unchanged')
+            ->assertJsonPath('attributes_added', 0)->assertJsonPath('gallery_added', 0)->assertJsonPath('description', 'preserved');
+        $this->assertSame($after, (array) DB::table('products')->first());
+        $this->assertSame($images, DB::table('product_images')->get()->toJson());
+    }
+
+    public function test_attributes_merge_preserves_manual_values_and_ignores_empty_duplicate_names(): void
+    {
+        DB::table('products')->where('id', $this->id)->update(['attributes' => json_encode(['Применение' => 'Ручное значение', 'Особое поле' => 'Сохранить'])]);
+        Http::fake(['*' => Http::response($this->bytes())]);
+        $payload = $this->payload();
+        $payload['content']['attributes'] = [
+            ['name' => ' применение ', 'value' => 'Не перезаписывать'],
+            ['name' => 'Тип  очистки', 'value' => 'грязь'],
+            ['name' => 'ТИП очистки', 'value' => 'duplicate'],
+            ['name' => '', 'value' => 'skip'], ['name' => 'Empty', 'value' => '  '],
+            ['name' => null, 'value' => null],
+        ];
+        $this->withToken('test-secret')->postJson(self::ENDPOINT, $payload)->assertOk()->assertJsonPath('attributes_added', 1);
+        $this->assertSame(['Применение' => 'Ручное значение', 'Особое поле' => 'Сохранить', 'Тип очистки' => 'грязь'], json_decode(DB::table('products')->value('attributes'), true));
+    }
+
+    public function test_commercial_or_nested_attribute_fields_rejected_without_download(): void
+    {
+        Http::fake();
+        $payload = $this->payload();
+        foreach ([[['name' => 'price', 'value' => '100']], [['name' => 'Тип', 'value' => 'очиститель', 'quantity' => 1]]] as $attributes) {
+            $payload['content']['attributes'] = $attributes;
+            $this->withToken('test-secret')->postJson(self::ENDPOINT, $payload)->assertUnprocessable();
+        }
+        Http::assertNothingSent();
+    }
 }

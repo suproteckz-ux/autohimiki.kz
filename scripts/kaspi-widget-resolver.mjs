@@ -39,6 +39,66 @@ async function captchaDetected(context) {
   return false;
 }
 
+// Shared by both commands. Poll the entire asynchronous widget lifecycle under one deadline.
+export async function waitForWidgetFrame(page, identity, {
+  timeoutMs = 60000, pollMs = 500, now = Date.now,
+  pause = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  captcha = async () => false,
+} = {}) {
+  const deadline = now() + timeoutMs;
+  let reason = 'widget_not_found';
+  let initialized = false;
+  while (now() < deadline) {
+    if (await captcha()) return { status: 'captcha_detected' };
+    const widgets = page.locator('.ks-widget');
+    const count = await widgets.count();
+    let widget;
+    for (let i = 0; i < count; i++) {
+      const candidate = widgets.nth(i);
+      if (await candidate.getAttribute('data-merchant-sku', {timeout:1000}) === identity.sku
+          && await candidate.getAttribute('data-merchant-code', {timeout:1000}) === identity.merchant
+          && await candidate.getAttribute('data-city', {timeout:1000}) === identity.city) {
+        if (widget) return { status: 'widget_mismatch' };
+        widget = candidate;
+      }
+    }
+    reason = widget ? 'iframe_not_loaded' : count ? 'widget_mismatch' : 'widget_not_found';
+    if (widget) {
+      const iframes = widget.locator('iframe');
+      const frameCount = await iframes.count();
+      if (frameCount > 1) return { status: 'widget_mismatch' };
+      if (!frameCount && !initialized) {
+        // A missing initializer is transient. Retry until the external script is available;
+        // once initialized, do not repeatedly reinit and destroy an iframe still loading.
+        initialized = await page.evaluate(() => {
+          if (typeof window.ksWidgetInitializer?.reinit !== 'function') return false;
+          window.ksWidgetInitializer.reinit();
+          return true;
+        });
+      }
+      if (frameCount === 1) {
+        const handle = await iframes.elementHandle({timeout:1000});
+        const frame = handle ? await handle.contentFrame() : null;
+        await handle?.dispose();
+        if (frame && frame.url() && frame.url() !== 'about:blank') {
+          let frameUrl;
+          try { frameUrl = new URL(frame.url()); } catch { return { status: 'widget_mismatch' }; }
+          if (frameUrl.origin !== 'https://kaspi.kz' || frameUrl.pathname !== '/shop/kaspibutton/frame/'
+              || frameUrl.searchParams.get('merchantSku') !== identity.sku
+              || frameUrl.searchParams.get('merchantCode') !== identity.merchant
+              || frameUrl.searchParams.get('city') !== identity.city) return { status: 'widget_mismatch' };
+          if (await frame.locator('a[href], button, [role="button"]').first().isVisible()) {
+            if (await captcha()) return { status: 'captcha_detected' };
+            return { status: 'ready', frame, frameUrl };
+          }
+        }
+      }
+    }
+    const remaining = deadline - now();
+    if (remaining > 0) await pause(Math.min(pollMs, remaining));
+  }
+  return { status: reason };
+}
 async function run() {
   if (process.platform !== 'win32' || arg('headless') !== 'false') {
     return { status: 'local_browser_disabled', captcha: false, url: null };
@@ -65,39 +125,11 @@ async function run() {
       const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       if (await captchaDetected(context)) return diagnostic('captcha_detected');
       if (!response?.ok() || page.url() !== source.href) return diagnostic('storefront_unavailable');
-      const widgets = page.locator('.ks-widget');
-      if (!await widgets.first().waitFor({ state: 'attached', timeout: 10000 }).then(() => true).catch(() => false)) {
-        return diagnostic(await captchaDetected(context) ? 'captcha_detected' : 'widget_not_found');
-      }
-      let widget;
-      for (let i = 0; i < await widgets.count(); i++) {
-        const candidate = widgets.nth(i);
-        if (await candidate.getAttribute('data-merchant-sku') === sku
-            && await candidate.getAttribute('data-merchant-code') === merchant
-            && await candidate.getAttribute('data-city') === city) {
-          if (widget) return diagnostic('widget_mismatch');
-          widget = candidate;
-        }
-      }
-      if (!widget) return diagnostic('widget_mismatch');
-      await page.evaluate(() => window.ksWidgetInitializer?.reinit?.());
-      if (!await widget.locator('iframe').waitFor({ state: 'attached', timeout: 15000 }).then(() => true).catch(() => false)) {
-        return diagnostic(await captchaDetected(context) ? 'captcha_detected' : 'iframe_not_loaded');
-      }
-      const handle = await widget.locator('iframe').elementHandle();
-      const frame = await handle.contentFrame();
-      if (!frame) return diagnostic('iframe_not_loaded');
-      await frame.waitForLoadState('domcontentloaded', { timeout: 15000 });
-      let frameUrl;
-      try { frameUrl = new URL(frame.url()); } catch { return diagnostic('iframe_not_loaded'); }
-      if (frameUrl.origin !== 'https://kaspi.kz' || frameUrl.pathname !== '/shop/kaspibutton/frame/'
-          || frameUrl.searchParams.get('merchantSku') !== sku || frameUrl.searchParams.get('merchantCode') !== merchant
-          || frameUrl.searchParams.get('city') !== city) return diagnostic('widget_mismatch');
-      // Wait inside the official iframe, not for unrelated links elsewhere in the storefront.
-      const ready = await frame.locator('a[href], button, [role="button"]').first()
-        .waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
-      if (await captchaDetected(context)) return diagnostic('captcha_detected');
-      if (!ready) return diagnostic('iframe_not_loaded');
+      const waiting = await waitForWidgetFrame(page, {sku, merchant, city}, {
+        captcha: () => captchaDetected(context),
+      });
+      if (waiting.status !== 'ready') return diagnostic(waiting.status);
+      const {frame, frameUrl} = waiting;
       const links = await frame.locator('a[href]').evaluateAll((anchors) => anchors.map((a) => a.href)
         .filter((href) => href && !href.startsWith('javascript:') && !href.startsWith('#')));
       if (links.length) return resolution(links, await captchaDetected(context));
@@ -116,7 +148,7 @@ async function run() {
       return resolution(urls);
     };
     return await Promise.race([operation(), new Promise((resolve) => {
-      timer = setTimeout(() => resolve(diagnostic('timeout')), 80000);
+      timer = setTimeout(() => resolve(diagnostic('timeout')), 120000);
     })]);
   } catch (error) {
     const captcha = context ? await captchaDetected(context).catch(() => false) : false;

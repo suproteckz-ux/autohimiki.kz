@@ -31,6 +31,11 @@ class KaspiSingleProductPolicy
             && (str_starts_with($p['path'] ?? '', '/img/m/p/') || str_starts_with($p['path'] ?? '', '/shop/medias/'));
     }
 
+    public static function attributeKey(string $name): string
+    {
+        return mb_strtolower(trim(preg_replace('/\s+/u', ' ', $name) ?? $name));
+    }
+
     public static function description(?string $html): string
     {
         // Store only a small inert HTML vocabulary: no attributes, links, embedded media or script.
