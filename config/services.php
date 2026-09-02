@@ -2,6 +2,10 @@
 
 return [
     'kaspi' => [
+        'internal_api_token' => env('KASPI_INTERNAL_API_TOKEN'),
+        'production_base_url' => env('KASPI_PRODUCTION_BASE_URL', 'https://autohimiki.kz'),
+        'local_browser_enabled' => (bool) env('KASPI_LOCAL_BROWSER_ENABLED', false),
+        'node_binary' => env('KASPI_NODE_BINARY', 'node'),
         'merchant_id' => env('KASPI_MERCHANT_ID'),
         'city_id' => env('KASPI_CITY_ID', '750000000'),
         'button_template' => 'button',
