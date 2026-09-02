@@ -25,13 +25,20 @@ class KaspiProductionBridgeService
             throw new \RuntimeException('candidate_identity_mismatch');
         }
         $resolved = $this->resolver->resolve($rows[0], $debug);
-        if (($resolved['status'] ?? '') !== 'resolved' || ($resolved['sku'] ?? '') !== $sku
+        if (($resolved['status'] ?? '') !== 'resolved') {
+            $status = $resolved['status'] ?? '';
+            $reason = in_array($status, ['widget_not_found', 'widget_mismatch', 'iframe_not_loaded',
+                'timeout', 'captcha_detected', 'ambiguous_urls', 'invalid_kaspi_url', 'storefront_unavailable',
+                'kaspi_url_not_opened', 'browser_error', 'local_browser_disabled', 'malformed_node_output'], true) ? $status : 'unknown';
+            throw new \RuntimeException('resolver_not_verified_'.$reason);
+        }
+        if (($resolved['sku'] ?? '') !== $sku
             || ($resolved['storefront_url'] ?? '') !== KaspiSingleProductPolicy::STOREFRONT || ($resolved['kaspi_url'] ?? '') !== KaspiSingleProductPolicy::URL) {
             throw new \RuntimeException('resolver_not_verified');
         }
         $parsed = $this->collector->collectUrl($resolved['kaspi_url']);
         $payload = $this->validator->validate(['version' => 1, 'sku' => $sku, 'storefront_url' => KaspiSingleProductPolicy::STOREFRONT,
-            'kaspi_url' => $parsed['url'], 'content' => ['title' => $parsed['title'], 'description' => $parsed['description'], 'images' => $parsed['images']],
+            'kaspi_url' => $parsed['url'], 'content' => ['title' => $parsed['title'], 'description' => $parsed['description'], 'images' => $parsed['images'], 'attributes' => $parsed['attributes']],
             'source' => ['collector' => 'local-playwright', 'resolver_verified' => true, 'captcha' => false,
                 'merchant_id' => (string) config('services.kaspi.merchant_id'), 'city_id' => (string) config('services.kaspi.city_id')]]);
         $state = $this->request('GET', ['sku' => $sku]);
@@ -42,7 +49,7 @@ class KaspiProductionBridgeService
 
         return ['payload' => $payload, 'preview' => ['sku' => $sku, 'kaspi_url' => $parsed['url'], 'title' => $parsed['title'],
             'description_length' => mb_strlen((string) $parsed['description']), 'image_count' => count($parsed['images']),
-            'attribute_count' => count($parsed['attributes']), 'attributes_policy' => 'diagnostic_only',
+            'attribute_count' => count($payload['content']['attributes']), 'attributes_policy' => 'merge_preserve_existing',
             'main_image_action' => $state['main_image_action'], 'description_action' => $state['description_action'],
             'existing_description_length' => $state['existing_description_length'] ?? null,
             'gallery_additions_planned' => '0..'.count($parsed['images']).' (content-hash deduplication on server)']];
@@ -57,7 +64,7 @@ class KaspiProductionBridgeService
             throw new \RuntimeException('invalid_import_response_check_before_retry');
         }
 
-        return array_intersect_key($result, array_flip(['status', 'sku', 'description', 'description_reason', 'main_image', 'gallery_added', 'attributes']));
+        return array_intersect_key($result, array_flip(['status', 'sku', 'description', 'description_reason', 'main_image', 'gallery_added', 'attributes', 'attributes_added']));
     }
 
     private function request(string $method, array $data): array

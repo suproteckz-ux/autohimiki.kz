@@ -9,7 +9,9 @@ use App\Models\Product;
 use App\Models\SeoFilter;
 use App\Models\SeoPage;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class PublicPagesSmokeTest extends TestCase
@@ -253,6 +255,76 @@ class PublicPagesSmokeTest extends TestCase
     public function test_product_page_loads(): void
     {
         $this->get("/product/{$this->product->slug}")->assertOk();
+    }
+
+    public function test_product_gallery_deduplicates_main_and_skips_missing_paths(): void
+    {
+        Storage::fake('public');
+        $disk = Storage::disk('public');
+        foreach (['gallery/main.jpg', 'gallery/main.webp', 'gallery/second.jpg'] as $path) {
+            $disk->put($path, 'image fixture');
+        }
+        DB::table('products')->where('id', $this->product->id)->update([
+            'sku' => '00000000680', 'main_image' => 'gallery/main.jpg',
+            'main_image_webp' => 'gallery/main.webp', 'main_image_alt' => 'Main photo',
+        ]);
+        foreach (['gallery/main.jpg', 'gallery/second.jpg', 'gallery/second.jpg', '', 'gallery/missing.jpg', '../outside.jpg'] as $index => $path) {
+            DB::table('product_images')->insert([
+                'product_id' => $this->product->id, 'path' => $path, 'path_webp' => 'gallery/missing.webp',
+                'alt' => null, 'sort_order' => $index,
+            ]);
+        }
+        $before = DB::table('products')->where('id', $this->product->id)->first();
+        $html = $this->get("/product/{$this->product->slug}")->assertOk()->getContent();
+        $dom = new \DOMDocument;
+        @$dom->loadHTML('<?xml encoding="UTF-8">'.$html);
+        $xpath = new \DOMXPath($dom);
+        $buttons = $xpath->query('//*[@data-gallery-thumbnail]');
+        $this->assertCount(2, $buttons);
+        $this->assertSame(asset('storage/gallery/main.jpg'), $xpath->query('.//img', $buttons->item(0))->item(0)->getAttribute('src'));
+        $this->assertSame(asset('storage/gallery/second.jpg'), $xpath->query('.//img', $buttons->item(1))->item(0)->getAttribute('src'));
+        $this->assertSame($this->product->name, $xpath->query('.//img', $buttons->item(1))->item(0)->getAttribute('alt'));
+        $main = $xpath->query('//*[@data-product-gallery]//picture//img')->item(0);
+        $this->assertSame(asset('storage/gallery/main.jpg'), $main->getAttribute('src'));
+        $this->assertSame('Main photo', $main->getAttribute('alt'));
+        $gallery = $dom->saveHTML($xpath->query('//*[@data-product-gallery]')->item(0));
+        $this->assertStringNotContainsString('missing.jpg', $gallery);
+        $this->assertStringNotContainsString('missing.webp', $gallery);
+        $this->assertEquals($before, DB::table('products')->where('id', $this->product->id)->first());
+    }
+
+    public function test_product_gallery_single_image_and_empty_fallback(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('single.jpg', 'image fixture');
+        DB::table('products')->where('id', $this->product->id)->update([
+            'main_image' => 'single.jpg', 'main_image_webp' => 'missing.webp', 'main_image_alt' => null,
+        ]);
+        $response = $this->get("/product/{$this->product->slug}")->assertOk();
+        $response->assertSee('src="'.asset('storage/single.jpg').'"', false)->assertDontSee('data-gallery-thumbnail', false);
+        DB::table('products')->where('id', $this->product->id)->update(['main_image' => null]);
+        $this->get("/product/{$this->product->slug}")->assertOk()->assertSee('Фото появится скоро')->assertDontSee('data-gallery-thumbnail', false);
+    }
+
+    public function test_characteristics_follow_description_and_escape_names_and_values(): void
+    {
+        DB::table('products')->where('id', $this->product->id)->update([
+            'description' => '<p>Description before characteristics</p>',
+            'attributes' => json_encode(['Применение' => 'двигатель', '<script>name</script>' => '<img src=x onerror=alert(1)>', 'Empty' => '']),
+        ]);
+        $response = $this->get("/product/{$this->product->slug}")->assertOk();
+        $response->assertSeeInOrder(['Description before characteristics', 'Характеристики', 'Применение', 'двигатель'])
+            ->assertSee('&lt;script&gt;name&lt;/script&gt;', false)->assertSee('&lt;img src=x onerror=alert(1)&gt;', false)
+            ->assertDontSee('<script>name</script>', false)->assertDontSee('<img src=x onerror=alert(1)>', false)
+            ->assertDontSee("tab === 'attr'", false);
+    }
+
+    public function test_empty_characteristics_block_is_absent(): void
+    {
+        foreach ([null, '{}', '[]', '{"Empty":""}'] as $attributes) {
+            DB::table('products')->where('id', $this->product->id)->update(['attributes' => $attributes]);
+            $this->get("/product/{$this->product->slug}")->assertOk()->assertDontSee('data-product-characteristics', false);
+        }
     }
 
     public function test_brand_index_and_detail_pages_load(): void

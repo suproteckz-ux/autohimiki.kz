@@ -4,7 +4,11 @@ namespace Tests\Feature;
 
 use App\Services\Kaspi\KaspiLocalBrowserGuard;
 use App\Services\Kaspi\KaspiLocalNodeProcessRunner;
+use App\Services\Kaspi\KaspiLocalPageCollector;
+use App\Services\Kaspi\KaspiLocalUrlResolver;
 use App\Services\Kaspi\KaspiProductionBridgeService;
+use App\Services\Kaspi\KaspiProductionCandidateClient;
+use App\Services\Kaspi\KaspiProductionPayloadValidator;
 use App\Services\Kaspi\KaspiSingleProductPolicy as Policy;
 use Illuminate\Support\Facades\Http;
 use Mockery;
@@ -39,7 +43,7 @@ class KaspiContentBridgeTest extends TestCase
                 return Http::response(['sku' => Policy::SKU, 'main_image_action' => 'replace_broken_or_empty', 'description_action' => 'preserve', 'existing_description_length' => 25]);
             }
             $this->assertSame(Policy::SKU, $request['sku']);
-            $this->assertSame(['title', 'description', 'images'], array_keys($request['content']));
+            $this->assertSame(['title', 'description', 'images', 'attributes'], array_keys($request['content']));
 
             return Http::response(['sku' => Policy::SKU, 'status' => 'imported', 'description' => 'preserved', 'main_image' => 'replaced', 'gallery_added' => 1]);
         });
@@ -54,6 +58,8 @@ class KaspiContentBridgeTest extends TestCase
         Http::assertNotSent(fn ($request) => $request->method() === 'POST');
         $this->assertSame('replace_broken_or_empty', $prepared['preview']['main_image_action']);
         $this->assertSame('preserve', $prepared['preview']['description_action']);
+        $this->assertSame('merge_preserve_existing', $prepared['preview']['attributes_policy']);
+        $this->assertSame([], $prepared['payload']['content']['attributes']);
         $result = $bridge->send($prepared['payload']);
         $this->assertSame('imported', $result['status']);
         Http::assertSentCount(3);
@@ -70,5 +76,34 @@ class KaspiContentBridgeTest extends TestCase
         }
         Http::assertSentCount(1);
         Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+    }
+
+    public function test_shared_resolver_failure_reason_survives_push_without_collection_or_post(): void
+    {
+        config(['services.kaspi.production_base_url' => 'https://autohimiki.kz',
+            'services.kaspi.merchant_id' => 'Avtoximiya', 'services.kaspi.city_id' => '750000000']);
+        Http::preventStrayRequests();
+        Http::fake();
+        $guard = Mockery::mock(KaspiLocalBrowserGuard::class);
+        $guard->shouldReceive('assertAllowed');
+        $client = Mockery::mock(KaspiProductionCandidateClient::class);
+        $candidate = ['sku' => Policy::SKU, 'name' => 'Manual name', 'storefront_url' => Policy::STOREFRONT];
+        $client->shouldReceive('fetch')->with(['sku' => Policy::SKU, 'limit' => 1])->times(3)->andReturn([$candidate]);
+        $runner = Mockery::mock(KaspiLocalNodeProcessRunner::class);
+        foreach (['iframe_not_loaded', 'widget_not_found', 'timeout'] as $status) {
+            $runner->shouldReceive('run')->once()->ordered()->with(['url' => Policy::STOREFRONT, 'sku' => Policy::SKU,
+                'merchant' => 'Avtoximiya', 'city' => '750000000', 'headless' => 'false'])
+                ->andReturn(['exit_code' => 1, 'stdout' => json_encode(['status' => $status, 'captcha' => false, 'url' => null])]);
+        }
+        $collector = Mockery::mock(KaspiLocalPageCollector::class);
+        $collector->shouldNotReceive('collectUrl');
+        $resolver = new KaspiLocalUrlResolver($runner, $guard);
+        $bridge = new KaspiProductionBridgeService($guard, $client, $resolver, $collector, app(KaspiProductionPayloadValidator::class));
+        $this->app->instance(KaspiProductionBridgeService::class, $bridge);
+        foreach (['iframe_not_loaded', 'widget_not_found', 'timeout'] as $status) {
+            $this->artisan('kaspi:push-production', ['--sku' => Policy::SKU, '--dry-run' => true, '--debug' => true])
+                ->expectsOutput('resolver_not_verified_'.$status)->assertFailed();
+        }
+        Http::assertNothingSent();
     }
 }

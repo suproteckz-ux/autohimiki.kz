@@ -22,20 +22,41 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 mb-12">
 
         {{-- Фото --}}
-        <div>
+        @php
+            $gallery = [];
+            $seenImagePaths = [];
+            $publicDisk = \Illuminate\Support\Facades\Storage::disk('public');
+            $imageExists = static fn ($path) => is_string($path) && trim($path) !== ''
+                && !str_contains($path, '..') && !preg_match('#^(?:/|[a-z]+:)|\\\\#i', $path)
+                && $publicDisk->exists($path);
+            $addImage = static function ($path, $webp, $alt) use (&$gallery, &$seenImagePaths, $imageExists, $product) {
+                if (!$imageExists($path) || isset($seenImagePaths[$path])) {
+                    return;
+                }
+                $seenImagePaths[$path] = true;
+                $gallery[] = [
+                    'src' => asset('storage/' . $path),
+                    'webp' => $imageExists($webp) ? asset('storage/' . $webp) : null,
+                    'alt' => trim((string) $alt) !== '' ? $alt : $product->name,
+                ];
+            };
+            $addImage($product->main_image, $product->main_image_webp, $product->main_image_alt);
+            foreach ($product->images as $image) {
+                $addImage($image->path, $image->path_webp, $image->alt);
+            }
+        @endphp
+        <div data-product-gallery x-data="{ selected: 0, images: {{ \Illuminate\Support\Js::from($gallery) }} }">
             <div class="aspect-square bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 relative">
-                @if($product->main_image)
+                @if(count($gallery))
                 <picture>
-                    @if($product->main_image_webp)
-                    <source srcset="{{ asset('storage/' . $product->main_image_webp) }}" type="image/webp">
-                    @endif
-                    <img src="{{ asset('storage/' . $product->main_image) }}"
-                         alt="{{ $product->main_image_alt ?: $product->name }}"
+                    <source @if($gallery[0]['webp']) srcset="{{ $gallery[0]['webp'] }}" @endif
+                            :srcset="images[selected].webp || ''" type="image/webp">
+                    <img src="{{ $gallery[0]['src'] }}" :src="images[selected].src"
+                         alt="{{ $gallery[0]['alt'] }}" :alt="images[selected].alt"
                          class="w-full h-full object-contain p-6"
                          width="600" height="600"
                          fetchpriority="high">
                 </picture>
-
                 {{-- Бейджи --}}
                 <div class="absolute top-4 left-4 flex flex-col gap-1.5">
                     @if($product->is_new)
@@ -60,6 +81,20 @@
                 </div>
                 @endif
             </div>
+            @if(count($gallery) > 1)
+            <div class="flex gap-2 mt-3 overflow-x-auto pb-1" role="group" aria-label="Фотографии товара">
+                @foreach($gallery as $index => $image)
+                <button type="button" data-gallery-thumbnail @click="selected = {{ $index }}"
+                        aria-label="Показать фото {{ $index + 1 }}" aria-pressed="{{ $index === 0 ? 'true' : 'false' }}"
+                        :aria-pressed="selected === {{ $index }}"
+                        class="shrink-0 w-20 h-20 rounded-lg border-2 bg-white p-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+                        :class="selected === {{ $index }} ? 'border-blue-500' : 'border-gray-200'">
+                    <img src="{{ $image['src'] }}" alt="{{ $image['alt'] }}"
+                         class="w-full h-full object-contain" width="80" height="80" loading="lazy">
+                </button>
+                @endforeach
+            </div>
+            @endif
         </div>
 
         {{-- Информация --}}
@@ -181,64 +216,45 @@
     {{-- ═══════════════════════════════════════════════════
          Описание + характеристики
     ═══════════════════════════════════════════════════ --}}
-    @if($product->description || $product->usage_instructions || $product->attributes)
-    <div class="mb-12">
-        <div x-data="{ tab: 'desc' }" class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-
-            {{-- Табы --}}
-            <div class="flex border-b border-gray-100">
-                @if($product->description)
-                <button @click="tab = 'desc'"
-                        :class="tab === 'desc' ? 'text-amber-600 border-b-2 border-amber-500 bg-amber-50' : 'text-gray-500 hover:text-gray-700'"
-                        class="px-5 py-4 text-sm font-semibold transition-colors">
-                    Описание
-                </button>
-                @endif
-                @if($product->usage_instructions)
-                <button @click="tab = 'usage'"
-                        :class="tab === 'usage' ? 'text-amber-600 border-b-2 border-amber-500 bg-amber-50' : 'text-gray-500 hover:text-gray-700'"
-                        class="px-5 py-4 text-sm font-semibold transition-colors">
-                    Применение
-                </button>
-                @endif
-                @if($product->attributes)
-                <button @click="tab = 'attr'"
-                        :class="tab === 'attr' ? 'text-amber-600 border-b-2 border-amber-500 bg-amber-50' : 'text-gray-500 hover:text-gray-700'"
-                        class="px-5 py-4 text-sm font-semibold transition-colors">
-                    Характеристики
-                </button>
-                @endif
+    @php
+        $displayAttributes = array_filter((array) $product->attributes, static fn ($value, $name) =>
+            trim((string) $name) !== '' && is_scalar($value) && trim((string) $value) !== '', ARRAY_FILTER_USE_BOTH);
+    @endphp
+    @if($product->description || $product->usage_instructions || $displayAttributes)
+    <div class="mb-12 bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-100">
+        @if($product->description)
+        <section class="p-6">
+            <h2 class="text-xl font-bold text-gray-900 mb-4">Описание</h2>
+            <div class="prose prose-sm prose-gray max-w-none">
+                {!! $product->description !!}
             </div>
-
-            {{-- Контент --}}
-            <div class="p-6">
-                @if($product->description)
-                <div x-show="tab === 'desc'" class="prose prose-sm prose-gray max-w-none">
-                    {!! $product->description !!}
-                </div>
-                @endif
-                @if($product->usage_instructions)
-                <div x-show="tab === 'usage'" class="prose prose-sm prose-gray max-w-none">
-                    {!! $product->usage_instructions !!}
-                </div>
-                @endif
-                @if($product->attributes)
-                <div x-show="tab === 'attr'">
-                    <div class="divide-y divide-gray-50">
-                        @foreach((array)$product->attributes as $key => $val)
-                        <div class="flex py-2.5 text-sm">
-                            <span class="w-48 flex-shrink-0 text-gray-500">{{ $key }}</span>
-                            <span class="text-gray-900 font-medium">{{ $val }}</span>
-                        </div>
-                        @endforeach
-                    </div>
-                </div>
-                @endif
+        </section>
+        @endif
+        @if($displayAttributes)
+        <section class="p-6" data-product-characteristics>
+            <h2 class="text-xl font-bold text-gray-900 mb-4">Характеристики</h2>
+            <table class="w-full text-sm text-left">
+                <tbody class="divide-y divide-gray-50">
+                    @foreach($displayAttributes as $name => $value)
+                    <tr>
+                        <th scope="row" class="w-1/2 sm:w-48 py-2.5 pr-4 align-top font-normal text-gray-500 break-words">{{ $name }}</th>
+                        <td class="py-2.5 text-gray-900 font-medium break-words">{{ $value }}</td>
+                    </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </section>
+        @endif
+        @if($product->usage_instructions)
+        <section class="p-6">
+            <h2 class="text-xl font-bold text-gray-900 mb-4">Применение</h2>
+            <div class="prose prose-sm prose-gray max-w-none">
+                {!! $product->usage_instructions !!}
             </div>
-        </div>
+        </section>
+        @endif
     </div>
     @endif
-
     {{-- ═══════════════════════════════════════════════════
          Похожие товары
     ═══════════════════════════════════════════════════ --}}

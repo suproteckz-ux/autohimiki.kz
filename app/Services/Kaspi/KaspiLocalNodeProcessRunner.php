@@ -11,7 +11,7 @@ class KaspiLocalNodeProcessRunner
 
     public function run(array $arguments): array
     {
-        return $this->execute('kaspi-widget-resolver.mjs', $arguments, 100);
+        return $this->execute('kaspi-widget-resolver.mjs', $arguments, 150);
     }
 
     public function collect(array $arguments): array

@@ -73,6 +73,30 @@ class KaspiProductionImportService
                     }
                 }
                 $changes = [];
+                $attributesAdded = 0;
+                $incomingAttributes = $payload['content']['attributes'] ?? [];
+                if ($incomingAttributes !== []) {
+                    $existingAttributes = trim((string) $product->attributes) === '' ? [] : json_decode($product->attributes, true);
+                    if (! is_array($existingAttributes) || ($existingAttributes !== [] && array_is_list($existingAttributes))) {
+                        throw new \RuntimeException('attributes_format_unsupported', 409);
+                    }
+                    $knownNames = [];
+                    foreach ($existingAttributes as $name => $value) {
+                        $knownNames[KaspiSingleProductPolicy::attributeKey((string) $name)] = true;
+                    }
+                    foreach ($incomingAttributes as $attribute) {
+                        $key = KaspiSingleProductPolicy::attributeKey($attribute['name']);
+                        if ($key === '' || trim($attribute['value']) === '' || isset($knownNames[$key])) {
+                            continue;
+                        }
+                        $existingAttributes[$attribute['name']] = $attribute['value'];
+                        $knownNames[$key] = true;
+                        $attributesAdded++;
+                    }
+                    if ($attributesAdded > 0) {
+                        $changes['attributes'] = json_encode((object) $existingAttributes, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+                    }
+                }
                 $replace = ! $this->exists($product->main_image);
                 $added = 0;
                 $order = (int) ($gallery->max('sort_order') ?? -1);
@@ -116,7 +140,7 @@ class KaspiProductionImportService
                 return ['status' => $changes !== [] || $added > 0 ? 'imported' : 'unchanged', 'sku' => $product->sku,
                     'description' => isset($changes['description']) ? 'updated' : 'preserved',
                     'description_reason' => trim((string) $product->description) !== '' ? 'existing_nonempty' : (isset($changes['description']) ? 'existing_empty' : 'collected_empty'),
-                    'main_image' => $replace ? 'replaced' : 'preserved', 'gallery_added' => $added, 'attributes' => 'diagnostic_only'];
+                    'main_image' => $replace ? 'replaced' : 'preserved', 'gallery_added' => $added, 'attributes' => $attributesAdded > 0 ? 'updated' : 'preserved', 'attributes_added' => $attributesAdded];
             }, 1);
         } catch (\Throwable $e) {
             // Only paths created by this attempt; manual files and pre-existing hash files are never deleted.
