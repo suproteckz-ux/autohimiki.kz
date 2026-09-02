@@ -24,6 +24,8 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // ── Observers ─────────────────────────────────────────────
+        RateLimiter::for('kaspi-candidates', fn (Request $request) => Limit::perMinute(60)->by($request->ip()));
+
         RateLimiter::for('search', function (Request $request) {
             return Limit::perMinute(30)->by(
                 optional($request->user())->id ?: $request->ip()
