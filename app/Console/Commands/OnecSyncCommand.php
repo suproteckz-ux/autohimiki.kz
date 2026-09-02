@@ -11,7 +11,7 @@ class OnecSyncCommand extends Command
 {
     protected $signature = 'onec:sync {--dry-run} {--sku=} {--limit=} {--file=} {--debug}';
 
-    protected $description = 'Validate the newest stable 1C XLSX and update only price, quantity and in_stock.';
+    protected $description = 'Sync commercial values from stable 1C XLSX; create unpublished products for new exact SKUs.';
 
     public function handle(OnecFileIntake $intake, CommercialImportRunner $runner): int
     {
@@ -39,7 +39,7 @@ class OnecSyncCommand extends Command
             }
             $result = $runner->run($file, $options);
             $this->info('SHA-256: '.$file['hash']);
-            foreach ($result['plans'] ?? [] as $plan) {
+            foreach ($this->option('debug') ? ($result['plans'] ?? []) : [] as $plan) {
                 $this->line(json_encode($plan, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
             }
             unset($result['plans']);
