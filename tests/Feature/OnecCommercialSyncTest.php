@@ -33,7 +33,7 @@ class OnecCommercialSyncTest extends TestCase
         $this->work = storage_path('framework/testing/onec-'.bin2hex(random_bytes(8)));
         File::makeDirectory($this->work, 0700, true);
         config(['onec.directory' => $this->work, 'onec.staging' => $this->work.'/private',
-            'onec.stable_seconds' => 1, 'onec.order_source' => 'ftp_mtime']);
+            'onec.stable_seconds' => 1, 'onec.order_source' => 'ftp_mtime', 'onec.full_snapshot' => false]);
         foreach (['2025_01_001_create_categories_table.php', '2025_01_002_create_brands_table.php',
             '2025_01_003_create_products_table.php', '2025_01_004_create_product_images_table.php',
             '2025_01_014_create_import_batches_table.php', '2025_01_015_create_import_errors_table.php',
@@ -147,7 +147,7 @@ class OnecCommercialSyncTest extends TestCase
         $this->assertDatabaseHas('import_batches', ['id' => $result['batch_id'], 'total_chunks' => 1, 'processed_chunks' => 1, 'status' => 'done']);
     }
 
-    public function test_numeric_validation_keeps_blank_and_bad_prices_independent_from_stock(): void
+    public function test_invalid_prices_preserve_price_but_disable_stock(): void
     {
         foreach ([null, '', 'garbage', '-100', '1,000.50', 'NaN', '10foo', '12.345'] as $price) {
             $sku = '000'.bin2hex(random_bytes(4));
@@ -155,7 +155,7 @@ class OnecCommercialSyncTest extends TestCase
             $plan = (new PriceStockUpdater(new ImportBatch))
                 ->planRow(['sku' => $sku, 'price' => $price, 'quantity' => 2]);
             $this->assertSame('99.50', $plan['after']['price']);
-            $this->assertSame(2, $plan['after']['quantity']);
+            $this->assertSame(0, $plan['after']['quantity']);
             $this->assertNotEmpty($plan['diagnostics']);
         }
         $this->assertSame('7300.25', CommercialValues::price("7\u{00A0}300,25"));
@@ -178,7 +178,7 @@ class OnecCommercialSyncTest extends TestCase
             $this->assertDatabaseHas('products', ['sku' => $sku, 'quantity' => 0, 'in_stock' => false, 'price' => 100]);
         }
         foreach (['invalid', 'fractional', 'blank'] as $sku) {
-            $this->assertDatabaseHas('products', ['sku' => $sku, 'quantity' => 9, 'in_stock' => false, 'price' => 100]);
+            $this->assertDatabaseHas('products', ['sku' => $sku, 'quantity' => 0, 'in_stock' => false, 'price' => 100]);
         }
     }
 
@@ -190,10 +190,10 @@ class OnecCommercialSyncTest extends TestCase
             ['шт', 'Same name', '000123', 4, null], ['шт', 'Same name', 'РТ-00000001', 2, 'bad'],
             ['шт', 'Same name', 'unknown', 3, 123],
         ]));
-        $this->assertDatabaseCount('products', 2);
-        $this->assertDatabaseHas('products', ['sku' => '000123', 'price' => 99.5, 'quantity' => 4]);
-        $this->assertDatabaseHas('products', ['sku' => 'РТ-00000001', 'price' => 99.5, 'quantity' => 2]);
-        $this->assertDatabaseHas('import_commercial_rows', ['sku' => 'unknown', 'status' => 'not_found']);
+        $this->assertDatabaseCount('products', 3);
+        $this->assertDatabaseHas('products', ['sku' => '000123', 'price' => 99.5, 'quantity' => 0]);
+        $this->assertDatabaseHas('products', ['sku' => 'РТ-00000001', 'price' => 99.5, 'quantity' => 0]);
+        $this->assertDatabaseHas('import_commercial_rows', ['sku' => 'unknown', 'status' => 'created']);
     }
 
     public function test_duplicate_hash_renamed_file_and_partial_then_full_are_idempotent(): void
@@ -419,5 +419,152 @@ class OnecCommercialSyncTest extends TestCase
         file_put_contents($file['path'], 'tampered');
         $this->expectExceptionMessage('Staged file hash changed');
         app(CommercialImportRunner::class)->run($file);
+    }
+
+    public function test_new_products_dry_run_creation_receipts_and_repeat(): void
+    {
+        $path = $this->workbook([
+            ['шт', 'Leading zero', ' 00000000680 ', 7, 5500],
+            ['шт', 'Кириллица', 'БК000000011', 4, 120],
+            ['шт', 'Blank price', 'РТ-00001284', 7, null],
+        ]);
+        $plan = $this->runFile($path, ['dry_run' => true]);
+        $this->assertSame(3, $plan['created_planned']);
+        $this->assertSame(1, $plan['invalid_price']);
+        $this->assertSame(0, $plan['matched']);
+        $this->assertSame('created_planned', $plan['plans'][0]['status']);
+        $this->assertSame('Leading zero', $plan['plans'][0]['name']);
+        $this->assertSame('5500.00', $plan['plans'][0]['price']);
+        $this->assertSame(7, $plan['plans'][0]['quantity']);
+        $this->assertTrue($plan['plans'][0]['in_stock']);
+        $this->assertDatabaseCount('products', 0);
+        $this->assertDatabaseCount('categories', 1);
+        $this->assertDatabaseCount('onec_files', 0);
+        $this->assertDatabaseCount('import_commercial_rows', 0);
+        $result = $this->runFile($path);
+        $this->assertSame(3, $result['created']);
+        $this->assertDatabaseHas('products', ['sku' => '00000000680', 'name' => 'Leading zero',
+            'price' => 5500, 'quantity' => 7, 'in_stock' => true, 'is_active' => false, 'description' => null, 'meta_title' => null, 'main_image' => null]);
+        $this->assertDatabaseHas('products', ['sku' => 'БК000000011', 'quantity' => 4, 'in_stock' => true]);
+        $this->assertDatabaseHas('products', ['sku' => 'РТ-00001284', 'price' => 0, 'quantity' => 0, 'in_stock' => false]);
+        $receipt = DB::table('import_commercial_rows')->where('sku', 'РТ-00001284')->first();
+        $this->assertSame('created', $receipt->status);
+        $this->assertNull($receipt->before_values);
+        $this->assertSame(['price' => '0.00', 'quantity' => 0, 'in_stock' => false], json_decode($receipt->after_values, true));
+        $this->assertNotEmpty(json_decode($receipt->diagnostics, true));
+        $this->assertSame((int) DB::table('products')->where('sku', 'РТ-00001284')->value('id'), (int) $receipt->product_id);
+        $this->assertSame('duplicate', $this->runFile($path)['status']);
+        $this->assertSame(0, $this->runFile($path, ['dry_run' => true])['created_planned']);
+        $this->assertDatabaseCount('products', 3);
+        $this->assertDatabaseCount('import_commercial_rows', 3);
+    }
+
+    public function test_missing_snapshot_guard_and_filtered_runs(): void
+    {
+        $id = $this->product('absent');
+        DB::table('products')->where('id', $id)->update(['in_stock' => true]);
+        $before = (array) DB::table('products')->find($id);
+        $path = $this->workbook([['шт', 'New', 'present', 2, 100]]);
+        $this->assertSame(0, $this->runFile($path, ['dry_run' => true])['missing_from_snapshot_planned']);
+        config(['onec.full_snapshot' => true]);
+        foreach ([['sku' => 'present'], ['limit' => 100]] as $filter) {
+            $this->assertSame(0, $this->runFile($path, $filter + ['dry_run' => true])['missing_from_snapshot_planned']);
+        }
+        $this->assertSame(1, $this->runFile($path, ['dry_run' => true])['missing_from_snapshot_planned']);
+        $this->assertSame($before, (array) DB::table('products')->find($id));
+        $this->assertSame(1, $this->runFile($path)['missing_from_snapshot_zeroed']);
+        $after = (array) DB::table('products')->find($id);
+        $this->assertSame(0, $after['quantity']);
+        foreach (array_diff(array_keys($before), ['quantity', 'in_stock']) as $field) {
+            $this->assertSame($before[$field], $after[$field], $field);
+        }
+        $this->assertDatabaseHas('import_commercial_rows', ['sku' => 'absent', 'status' => 'missing_from_snapshot', 'row_number' => 0]);
+        $this->assertNotNull(DB::table('onec_files')->value('completed_at'));
+        DB::table('products')->where('id', $id)->update(['quantity' => 8]);
+        $this->assertSame('duplicate', $this->runFile($path)['status']);
+        $this->assertSame(0, $this->runFile($path, ['dry_run' => true])['missing_from_snapshot_planned']);
+        $this->assertDatabaseHas('products', ['id' => $id, 'quantity' => 8]);
+    }
+
+    public function test_disabled_or_filtered_apply_does_not_zero_missing_and_config_does_not_replay_hash(): void
+    {
+        foreach ([false, true] as $enabled) {
+            config(['onec.full_snapshot' => $enabled]);
+            $sku = $enabled ? 'second' : 'first';
+            $id = $this->product($sku);
+            $path = $this->workbook([['шт', 'New', 'present-'.$sku, 2, 100]]);
+            touch($path, time() - ($enabled ? 30 : 120));
+            $this->runFile($path, $enabled ? ['limit' => 1] : []);
+            $this->assertDatabaseHas('products', ['id' => $id, 'quantity' => 9, 'price' => 99.5]);
+            config(['onec.full_snapshot' => true]);
+            $this->assertSame('duplicate', $this->runFile($path)['status']);
+            $this->assertDatabaseHas('products', ['id' => $id, 'quantity' => 9]);
+        }
+    }
+
+    public function test_failure_after_creation_and_missing_zeroing_rolls_back_everything(): void
+    {
+        config(['onec.full_snapshot' => true]);
+        $id = $this->product('absent');
+        $present = $this->product('existing');
+        $path = $this->workbook([['шт', 'New', 'new', 2, 100], ['шт', 'Existing', 'existing', 3, 200]]);
+        $throw = true;
+        DB::listen(function ($query) use (&$throw) {
+            if ($throw && str_starts_with($query->sql, 'update "onec_files"')) {
+                $throw = false;
+                throw new \RuntimeException('Failure after product creation and zeroing');
+            }
+        });
+        try {
+            $this->runFile($path);
+            $this->fail('Expected interruption');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Failure after product creation and zeroing', $e->getMessage());
+        }
+        $this->assertDatabaseMissing('products', ['sku' => 'new']);
+        $this->assertDatabaseCount('categories', 1);
+        $this->assertDatabaseHas('products', ['id' => $id, 'quantity' => 9]);
+        $this->assertDatabaseHas('products', ['id' => $present, 'quantity' => 9, 'price' => 99.5]);
+        foreach (['onec_files', 'import_commercial_rows', 'import_chunks'] as $table) {
+            $this->assertDatabaseCount($table, 0);
+        }
+        $this->assertNull(DB::table('import_run_locks')->value('file_hash'));
+        $result = $this->runFile($path);
+        $this->assertSame(1, $result['created']);
+        $this->assertSame(1, $result['updated']);
+        $this->assertSame(1, $result['missing_from_snapshot_zeroed']);
+    }
+
+    public function test_existing_invalid_prices_apply_and_new_product_manual_content_survives_next_export(): void
+    {
+        $this->product('blank');
+        $this->product('bad');
+        $first = $this->workbook([['шт', 'Blank', 'blank', 7, null], ['шт', 'Bad', 'bad', 7, 'malformed'], ['шт', 'Initial', 'new', 1, 100]]);
+        $this->runFile($first);
+        foreach (['blank', 'bad'] as $sku) {
+            $this->assertDatabaseHas('products', ['sku' => $sku, 'price' => 99.5, 'quantity' => 0, 'in_stock' => false]);
+        }
+        $id = DB::table('products')->where('sku', 'new')->value('id');
+        DB::table('products')->where('id', $id)->update(['name' => 'Manual', 'category_id' => 1, 'description' => 'Edited', 'is_active' => true]);
+        $before = (array) DB::table('products')->find($id);
+        $next = $this->workbook([['шт', 'Do not use', 'new', 5, 200]]);
+        touch($next, time() - 30);
+        $this->runFile($next);
+        $after = (array) DB::table('products')->find($id);
+        foreach (array_diff(array_keys($before), ['price', 'quantity', 'in_stock']) as $field) {
+            $this->assertSame($before[$field], $after[$field], $field);
+        }
+        $this->assertSame(5, $after['quantity']);
+    }
+
+    public function test_dry_run_reports_conflict_without_writes(): void
+    {
+        $path = $this->workbook([['шт', '', 'new', 3, 100]]);
+        $plan = $this->runFile($path, ['dry_run' => true]);
+        $this->assertSame(1, $plan['conflicts']);
+        $this->assertDatabaseCount('products', 0);
+        $this->assertDatabaseCount('onec_files', 0);
+        $this->expectExceptionMessage('Missing or oversized name');
+        $this->runFile($path);
     }
 }

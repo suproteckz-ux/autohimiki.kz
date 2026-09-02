@@ -29,7 +29,7 @@ class CommercialImportRunner
             throw new \RuntimeException('Staged file changed during validation.');
         }
         $rows = app(ColumnMapper::class)->map($raw, [
-            'sku' => 'Номенклатура.Код', 'price' => 'Розничная цена', 'quantity' => 'Остаток на складе',
+            'sku' => 'Номенклатура.Код', 'name' => 'Номенклатура', 'price' => 'Розничная цена', 'quantity' => 'Остаток на складе',
         ]);
         $selected = array_values(array_filter($rows, fn ($row) => ! isset($options['sku']) || $row['sku'] === $options['sku']));
         if (isset($options['limit'])) {
@@ -45,8 +45,9 @@ class CommercialImportRunner
                 return ['status' => 'duplicate', 'total_rows' => count($rows), 'selected_rows' => count($selected), 'updated' => 0];
             }
         }
+        $fullSnapshot = config('onec.full_snapshot', false) && ! isset($options['sku']) && ! isset($options['limit']);
         if ($options['dry_run'] ?? false) {
-            return DB::transaction(function () use ($file, $selected, $rows) {
+            return DB::transaction(function () use ($file, $selected, $rows, $fullSnapshot) {
                 $state = $this->lock();
                 $ledger = DB::table('onec_files')->where('sha256', $file['hash'])->first();
                 $this->assertOrder($file, $state, $ledger);
@@ -61,13 +62,16 @@ class CommercialImportRunner
                     return $plan;
                 }, $selected);
 
-                return ['status' => 'dry_run', 'total_rows' => count($rows), 'selected_rows' => count($selected), 'plans' => $plans];
+                $missing = $fullSnapshot && ! $ledger?->completed_at ? $updater->planMissing($rows) : [];
+
+                return ['status' => 'dry_run', 'total_rows' => count($rows), 'selected_rows' => count($selected),
+                    'full_snapshot' => $fullSnapshot, 'plans' => array_merge($plans, $missing)] + $this->summary($plans, $missing);
             });
         }
         $batch ??= ImportBatch::create(['type' => 'prices_only', 'source' => 'onec',
             'filename' => basename($file['original']), 'filepath' => $file['path'], 'status' => 'pending']);
         try {
-            return DB::transaction(function () use ($file, $rows, $selected, $batch) {
+            return DB::transaction(function () use ($file, $rows, $selected, $batch, $fullSnapshot) {
                 $state = $this->lock();
                 $batch->refresh();
                 if ($batch->status === 'done') {
@@ -85,12 +89,15 @@ class CommercialImportRunner
                 $batch->update(['source' => 'onec', 'onec_file_id' => $id, 'filepath' => $file['path'],
                     'status' => 'processing', 'started_at' => now(), 'finished_at' => null,
                     'total_rows' => count($selected), 'total_chunks' => count($chunks), 'processed_chunks' => 0,
-                    'updated_count' => 0, 'error_count' => 0, 'not_found_count' => 0,
+                    'created_count' => 0, 'updated_count' => 0, 'error_count' => 0, 'not_found_count' => 0,
                     'skipped_count' => count($selected) - count($remaining)]);
                 foreach ($chunks as $index => $chunk) {
                     (new ImportChunkJob($batch->id, $chunk, $index, count($chunks)))->handle();
                 }
-                $processed = DB::table('import_commercial_rows')->where('onec_file_id', $id)->count();
+                $updater = new PriceStockUpdater($batch);
+                $missing = $fullSnapshot && ! $ledger?->completed_at ? $updater->planMissing($rows, true) : [];
+                $updater->applyMissing($missing);
+                $processed = DB::table('import_commercial_rows')->where('onec_file_id', $id)->where('row_number', '>', 0)->count();
                 if ($processed === count($rows)) {
                     DB::table('onec_files')->where('id', $id)->update(['completed_at' => now(), 'updated_at' => now()]);
                 }
@@ -104,7 +111,8 @@ class CommercialImportRunner
 
                 return ['status' => $remaining === [] ? 'duplicate' : 'done', 'batch_id' => $batch->id,
                     'total_rows' => count($rows), 'selected_rows' => count($selected),
-                    'updated' => $batch->updated_count, 'not_found' => $batch->not_found_count,
+                    'created' => $batch->created_count, 'updated' => $batch->updated_count, 'not_found' => $batch->not_found_count,
+                    'missing_from_snapshot_zeroed' => count($missing),
                     'diagnostic_rows' => $batch->error_count, 'skipped' => $batch->skipped_count];
             });
         } catch (\Throwable $e) {
@@ -124,6 +132,24 @@ class CommercialImportRunner
         }
 
         return $state;
+    }
+
+    private function summary(array $plans, array $missing): array
+    {
+        $summary = ['matched' => 0, 'created_planned' => 0, 'updated' => 0, 'unchanged' => 0,
+            'invalid_price' => 0, 'invalid_quantity' => 0, 'missing_from_snapshot_planned' => count($missing),
+            'conflicts' => 0, 'diagnostics' => 0, 'already_processed' => 0];
+        foreach ($plans as $plan) {
+            $summary['matched'] += $plan['product_id'] !== null ? 1 : 0;
+            $summary['invalid_price'] += $plan['invalid_price'] ? 1 : 0;
+            $summary['invalid_quantity'] += $plan['invalid_quantity'] ? 1 : 0;
+            $summary['diagnostics'] += count($plan['diagnostics']);
+            $key = $plan['status'] === 'conflict' ? 'conflicts' : $plan['status'];
+            $summary[$key]++;
+        }
+        $summary['diagnostics'] += count($missing);
+
+        return $summary;
     }
 
     private function assertOrder(array $file, object $state, ?object $ledger): void
