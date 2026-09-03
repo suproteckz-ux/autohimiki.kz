@@ -14,6 +14,7 @@ use App\Services\Import\FullProductImporter;
 use App\Services\Import\ImportFileParser;
 use App\Services\Import\OnecFileIntake;
 use App\Services\Import\PriceStockUpdater;
+use Illuminate\Support\Env;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -566,5 +567,103 @@ class OnecCommercialSyncTest extends TestCase
         $this->assertDatabaseCount('onec_files', 0);
         $this->expectExceptionMessage('Missing or oversized name');
         $this->runFile($path);
+    }
+
+    public function test_full_snapshot_updates_present_zeroes_only_missing_stock_and_preserves_audit_and_content(): void
+    {
+        config(['onec.full_snapshot' => true]);
+        $present = $this->product('000123');
+        $missing = $this->product('123');
+        $zero = $this->product('already-zero');
+        DB::table('products')->where('id', $missing)->update(['in_stock' => true]);
+        DB::table('products')->where('id', $zero)->update(['quantity' => 0, 'in_stock' => false]);
+        DB::table('product_images')->insert(['product_id' => $missing, 'path' => 'products/kaspi/manual.jpg']);
+        $before = (array) DB::table('products')->find($missing);
+        $gallery = DB::table('product_images')->get()->toJson();
+        $zeroBefore = (array) DB::table('products')->find($zero);
+        $productWrites = [];
+        DB::listen(function ($query) use (&$productWrites) {
+            if (str_starts_with($query->sql, 'update "products"')) {
+                $productWrites[] = $query->sql;
+            }
+        });
+        $file = $this->workbook([['шт', 'Existing', '000123', 4, 250], ['шт', 'New product', '000999', 2, 10]]);
+        $result = $this->runFile($file);
+        $this->assertSame(1, $result['missing_from_snapshot_zeroed']);
+        $this->assertDatabaseHas('products', ['id' => $present, 'sku' => '000123', 'price' => 250, 'quantity' => 4, 'in_stock' => true]);
+        $after = (array) DB::table('products')->find($missing);
+        $this->assertSame(0, $after['quantity']);
+        $this->assertFalse((bool) $after['in_stock']);
+        foreach (array_diff(array_keys($before), ['quantity', 'in_stock']) as $key) {
+            $this->assertSame($before[$key], $after[$key], $key);
+        }
+        $this->assertSame($gallery, DB::table('product_images')->get()->toJson());
+        $this->assertSame($zeroBefore, (array) DB::table('products')->find($zero));
+        $this->assertDatabaseMissing('import_commercial_rows', ['sku' => 'already-zero']);
+        $this->assertSame('update "products" set "quantity" = ?, "in_stock" = ? where "id" = ?', end($productWrites));
+        $receipt = DB::table('import_commercial_rows')->where('sku', '123')->first();
+        $this->assertSame('missing_from_snapshot', $receipt->status);
+        $this->assertSame(0, $receipt->row_number);
+        $this->assertSame(['price' => '99.50', 'quantity' => 9, 'in_stock' => true], json_decode($receipt->before_values, true));
+        $this->assertSame(['price' => '99.50', 'quantity' => 0, 'in_stock' => false], json_decode($receipt->after_values, true));
+        $new = DB::table('products')->where('sku', '000999')->first();
+        $this->assertFalse((bool) $new->is_active);
+        $this->assertSame('bez-kategorii', DB::table('categories')->where('id', $new->category_id)->value('slug'));
+        $journal = DB::table('import_commercial_rows')->get()->toJson();
+        $writes = count($productWrites);
+        $this->assertSame('duplicate', $this->runFile($file)['status']);
+        $this->assertCount($writes, $productWrites);
+        $this->assertSame($journal, DB::table('import_commercial_rows')->get()->toJson());
+    }
+
+    public function test_full_snapshot_empty_invalid_unreadable_and_structurally_incomplete_files_never_zero_stock(): void
+    {
+        config(['onec.full_snapshot' => true]);
+        $id = $this->product('missing-from-invalid-file');
+        DB::table('products')->where('id', $id)->update(['in_stock' => true]);
+        $before = (array) DB::table('products')->find($id);
+        $path = $this->work.'/input.xlsx';
+        $invalidBytes = function (string $bytes) use ($path) {
+            file_put_contents($path, $bytes);
+            touch($path, time() - 120);
+
+            return $path;
+        };
+        foreach ([
+            fn () => $invalidBytes(''),
+            fn () => $invalidBytes('corrupt XLSX'),
+            fn () => $this->work.'/unreadable.xlsx',
+            fn () => $this->workbook([]),
+            fn () => $this->workbook([['шт', 'Wrong', 'new', 1, 10]], ['wrong headers']),
+            fn () => $this->workbook([['шт', 'Valid first row', 'new', 1, 10], ['шт', 'Invalid later row', 123, 1, 10]]),
+        ] as $make) {
+            try {
+                $this->runFile($make(), ['dry_run' => false]);
+                $this->fail('Invalid full snapshot must fail');
+            } catch (\RuntimeException $e) {
+                $this->assertNotEmpty($e->getMessage());
+            }
+            $this->assertSame($before, (array) DB::table('products')->find($id));
+            $this->assertDatabaseCount('products', 1);
+            $this->assertDatabaseCount('onec_files', 0);
+            $this->assertDatabaseCount('import_commercial_rows', 0);
+        }
+    }
+
+    public function test_full_snapshot_config_defaults_to_true_and_allows_explicit_false_override(): void
+    {
+        $repository = Env::getRepository();
+        $previous = $repository->get('ONEC_FULL_SNAPSHOT');
+        try {
+            $repository->clear('ONEC_FULL_SNAPSHOT');
+            $this->assertTrue((require config_path('onec.php'))['full_snapshot']);
+            $repository->set('ONEC_FULL_SNAPSHOT', 'false');
+            $this->assertFalse((require config_path('onec.php'))['full_snapshot']);
+        } finally {
+            $repository->clear('ONEC_FULL_SNAPSHOT');
+            if ($previous !== null) {
+                $repository->set('ONEC_FULL_SNAPSHOT', $previous);
+            }
+        }
     }
 }
