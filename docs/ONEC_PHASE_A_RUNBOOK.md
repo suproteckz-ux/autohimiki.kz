@@ -70,19 +70,37 @@ no padding or name matching. A database collation match to a different SKU strin
 is a conflict, as are multiple target matches. Apply fails and rolls back; dry-run
 reports the conflict without product/ledger writes.
 
-Both historical fixtures contain 263 identical product rows, 10 blank prices,
-plus warehouse totals in one layout. Neither headers, totals nor the filename
-prove inclusion of zero-stock/inactive/all nomenclature items. The actual current
-production bytes were not available in this workspace for this revision. Therefore
-fullness is **unconfirmed**, and `ONEC_FULL_SNAPSHOT=false` is the safe default.
-Ask the 1C report owner to verify filters and inclusion of zero-stock, inactive and
-all catalog codes; compare the missing-SKU list with the intended catalog scope.
+The current business contract treats the accepted 1C export as the complete stock
+snapshot. `ONEC_FULL_SNAPSHOT=true` is now the default; replace an explicit `false`
+in an existing production environment with `true`. Refresh cached configuration
+through the normal deployment procedure. Scheduling remains independently gated
+by `ONEC_SCHEDULE_ENABLED`; this change does not enable it.
 
 `ONEC_FULL_SNAPSHOT=true` permits absent-SKU zeroing only on an unfiltered full run.
 Any `--sku` or `--limit`, even a limit larger than the file, disables zeroing.
 The presence set always comes from the entire parsed file. Invalid-price source
 rows are present rows, not missing rows. Only absent products whose quantity or
 availability actually changes receive a missing receipt/count.
+
+Missing-product SQL updates contain only `quantity` and `in_stock`, never price
+or content/identity/publication/timestamp fields. Before/after price is retained
+in the existing ledger for audit. Transaction rollback covers missing rows too;
+there is no new automatic post-commit rollback command.
+
+Empty/header-only, unreadable, corrupt, structurally invalid or interrupted
+imports cannot commit zeroing. Existing guards cannot establish semantic
+completeness of a structurally valid subset; the producer must supply the agreed
+complete export. No heuristic row-count threshold is introduced.
+
+First read-only production check after applying configuration through the normal
+deployment procedure (do not use SKU/limit filters for this preview):
+
+```sh
+/opt/plesk/php/8.3/bin/php artisan onec:sync --dry-run --debug
+```
+
+Check `full_snapshot=true`, `missing_from_snapshot_planned`, and missing-SKU plans.
+An already completed hash still has no new missing plans; see replay rules below.
 
 ## Transactions, receipts and repeats
 

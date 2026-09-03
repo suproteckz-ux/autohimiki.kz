@@ -91,7 +91,10 @@ class PriceStockUpdater
             if ($this->hasReceipt($plan['sku'])) {
                 continue;
             }
-            DB::table('products')->where('id', $plan['product_id'])->update($plan['after']);
+            // Missing rows write stock only; price remains in the audit snapshot.
+            DB::table('products')->where('id', $plan['product_id'])->update([
+                'quantity' => $plan['after']['quantity'], 'in_stock' => $plan['after']['in_stock'],
+            ]);
             $this->receipt($plan);
         }
     }

@@ -45,7 +45,7 @@ class CommercialImportRunner
                 return ['status' => 'duplicate', 'total_rows' => count($rows), 'selected_rows' => count($selected), 'updated' => 0];
             }
         }
-        $fullSnapshot = config('onec.full_snapshot', false) && ! isset($options['sku']) && ! isset($options['limit']);
+        $fullSnapshot = config('onec.full_snapshot', true) && ! isset($options['sku']) && ! isset($options['limit']);
         if ($options['dry_run'] ?? false) {
             return DB::transaction(function () use ($file, $selected, $rows, $fullSnapshot) {
                 $state = $this->lock();
