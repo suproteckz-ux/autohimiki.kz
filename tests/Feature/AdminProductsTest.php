@@ -7,6 +7,10 @@ use App\Models\Category;
 use App\Models\Product;
 use App\Models\User;
 use Filament\Facades\Filament;
+use Filament\Tables\Columns\SelectColumn;
+use Filament\Tables\Columns\TextInputColumn;
+use Filament\Tables\Columns\ToggleColumn;
+use Filament\Tables\Columns\ViewColumn;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
@@ -61,7 +65,35 @@ class AdminProductsTest extends TestCase
 
     public function test_admin_products_page_loads(): void
     {
+        $product = $this->product();
+
         $this->get('/admin/products')->assertOk()->assertSee('Товары');
+        $this->get('/admin/products/create')->assertOk()->assertSee('Создать');
+        $this->get("/admin/products/{$product->id}/edit")->assertOk()->assertSee($product->name);
+    }
+
+    public function test_reference_layout_columns_actions_and_bulk_actions_are_present(): void
+    {
+        $product = $this->product();
+
+        Livewire::test(ListProducts::class)
+            ->assertTableColumnExists('product_summary', fn ($column): bool => $column instanceof ViewColumn)
+            ->assertSeeHtml('class="fi-product-summary"')
+            ->assertTableColumnExists('category_id', fn ($column): bool => $column instanceof SelectColumn)
+            ->assertTableColumnExists('price', fn ($column): bool => $column instanceof TextInputColumn)
+            ->assertTableColumnExists('quantity', fn ($column): bool => $column instanceof TextInputColumn)
+            ->assertTableColumnExists('in_stock', fn ($column): bool => $column instanceof ToggleColumn)
+            ->assertTableColumnExists('is_active', fn ($column): bool => $column instanceof ToggleColumn)
+            ->assertTableColumnExists('is_hit', fn ($column): bool => $column instanceof ToggleColumn)
+            ->assertTableActionExists('edit')
+            ->assertTableActionExists('storefront')
+            ->assertTableActionExists('delete')
+            ->assertTableBulkActionExists('changeCategory')
+            ->assertTableBulkActionExists('activate')
+            ->assertTableBulkActionExists('deactivate')
+            ->assertTableBulkActionExists('delete')
+            ->assertActionExists('create')
+            ->assertSee($product->sku);
     }
 
     public function test_inline_category_change_updates_only_category(): void
@@ -139,6 +171,7 @@ class AdminProductsTest extends TestCase
 
     public function test_manager_can_manage_products_but_cannot_bulk_delete(): void
     {
+        $product = $this->product();
         $manager = User::query()->create([
             'name' => 'Manager',
             'email' => 'manager@example.test',
@@ -151,7 +184,9 @@ class AdminProductsTest extends TestCase
         $this->get('/admin/products')->assertOk();
         Livewire::test(ListProducts::class)
             ->assertTableBulkActionExists('changeCategory')
-            ->assertTableBulkActionHidden('delete');
+            ->assertTableBulkActionHidden('delete')
+            ->assertTableActionVisible('edit', $product)
+            ->assertTableActionHidden('delete', $product);
     }
 
     private function runMigration(string $file): void
