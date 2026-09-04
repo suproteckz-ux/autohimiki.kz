@@ -2,19 +2,30 @@
 
 namespace App\Filament\Resources;
 
+use App\Filament\Resources\ProductResource\Pages\CreateProduct;
+use App\Filament\Resources\ProductResource\Pages\EditProduct;
 use App\Filament\Resources\ProductResource\Pages\ListProducts;
 use App\Models\Category;
 use App\Models\Product;
+use Filament\Actions\Action;
 use Filament\Actions\BulkAction;
 use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Schema;
 use Filament\Tables\Columns\SelectColumn;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\TextInputColumn;
 use Filament\Tables\Columns\ToggleColumn;
+use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Gate;
@@ -32,17 +43,59 @@ class ProductResource extends Resource
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-shopping-bag';
 
+    public static function form(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                Section::make('Товар')
+                    ->columns(2)
+                    ->schema([
+                        TextInput::make('name')->label('Название')->required()->maxLength(255),
+                        TextInput::make('sku')->label('SKU')->required()->unique(ignoreRecord: true)->maxLength(255),
+                        TextInput::make('slug')->label('Slug')->required()->unique(ignoreRecord: true)->maxLength(255),
+                        Select::make('category_id')
+                            ->label('Категория')
+                            ->relationship('category', 'name')
+                            ->searchable()
+                            ->preload()
+                            ->required(),
+                        Select::make('brand_id')
+                            ->label('Бренд')
+                            ->relationship('brand', 'name')
+                            ->searchable()
+                            ->preload(),
+                        FileUpload::make('main_image')
+                            ->label('Главное изображение')
+                            ->disk('public')
+                            ->directory('products')
+                            ->image(),
+                    ]),
+                Section::make('Коммерческие поля')
+                    ->columns(4)
+                    ->schema([
+                        TextInput::make('price')->label('Цена')->numeric()->minValue(0)->required(),
+                        TextInput::make('quantity')->label('Остаток')->numeric()->minValue(0)->required(),
+                        Toggle::make('in_stock')->label('В наличии'),
+                        Toggle::make('is_active')->label('Активен'),
+                        Toggle::make('is_hit')->label('Хит'),
+                    ]),
+                Section::make('Контент')
+                    ->schema([
+                        Textarea::make('short_description')->label('Краткое описание')->rows(3),
+                        Textarea::make('description')->label('Описание')->rows(8),
+                    ]),
+            ]);
+    }
+
     public static function table(Table $table): Table
     {
         return $table
             ->columns([
-                TextColumn::make('name')
+                ViewColumn::make('product_summary')
                     ->label('Товар / SKU')
-                    ->description(fn (Product $record): string => $record->sku)
+                    ->view('filament.tables.columns.product-summary')
                     ->searchable(['name', 'sku'])
-                    ->sortable()
-                    ->limit(80)
-                    ->tooltip(fn (Product $record): string => $record->name)
+                    ->sortable(query: fn ($query, string $direction) => $query->orderBy('name', $direction))
                     ->grow(),
                 SelectColumn::make('category_id')
                     ->label('Категория')
@@ -72,19 +125,19 @@ class ProductResource extends Resource
                             return $record->getOriginal('category_id');
                         }
                     })
-                    ->width('15rem'),
+                    ->width('13rem'),
                 TextInputColumn::make('price')
                     ->label('Цена')
                     ->type('number')
                     ->rules(['numeric', 'min:0'])
                     ->disabled(fn (Product $record): bool => ! static::canEdit($record))
-                    ->width('8rem'),
+                    ->width('7rem'),
                 TextInputColumn::make('quantity')
                     ->label('Ост.')
                     ->type('number')
                     ->rules(['integer', 'min:0'])
                     ->disabled(fn (Product $record): bool => ! static::canEdit($record))
-                    ->width('6rem'),
+                    ->width('5rem'),
                 ToggleColumn::make('in_stock')
                     ->label('Нал.')
                     ->disabled(fn (Product $record): bool => ! static::canEdit($record)),
@@ -94,6 +147,24 @@ class ProductResource extends Resource
                 ToggleColumn::make('is_hit')
                     ->label('Хит')
                     ->disabled(fn (Product $record): bool => ! static::canEdit($record)),
+            ])
+            ->recordActions([
+                EditAction::make()
+                    ->label('Редактировать')
+                    ->icon('heroicon-o-pencil-square')
+                    ->color('warning')
+                    ->iconButton(),
+                Action::make('storefront')
+                    ->label('Открыть на витрине')
+                    ->icon('heroicon-o-arrow-top-right-on-square')
+                    ->url(fn (Product $record): string => $record->url)
+                    ->openUrlInNewTab()
+                    ->iconButton(),
+                DeleteAction::make()
+                    ->label('Удалить')
+                    ->iconButton()
+                    ->requiresConfirmation()
+                    ->visible(fn (): bool => Gate::allows('delete-content')),
             ])
             ->defaultSort('id', 'desc')
             ->paginationPageOptions([25, 50, 100])
@@ -160,7 +231,7 @@ class ProductResource extends Resource
 
     public static function canCreate(): bool
     {
-        return false;
+        return auth()->user()?->isManager() ?? false;
     }
 
     public static function canEdit($record): bool
@@ -177,6 +248,8 @@ class ProductResource extends Resource
     {
         return [
             'index' => ListProducts::route('/'),
+            'create' => CreateProduct::route('/create'),
+            'edit' => EditProduct::route('/{record}/edit'),
         ];
     }
 }
