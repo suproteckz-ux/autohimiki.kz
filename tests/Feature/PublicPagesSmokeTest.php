@@ -9,6 +9,7 @@ use App\Models\Product;
 use App\Models\SeoFilter;
 use App\Models\SeoPage;
 use App\Models\User;
+use App\Services\CacheService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -377,6 +378,39 @@ class PublicPagesSmokeTest extends TestCase
         ] as $uri) {
             $this->get($uri)->assertOk();
         }
+    }
+
+    public function test_yandexmetrika_is_in_actual_public_html(): void
+    {
+        config(['services.yandex_metrika.counter_id' => null]);
+        DB::table('settings')->where('key', 'yandex_metrika_id')->delete();
+        CacheService::forgetSettings();
+
+        foreach (['/', '/catalog', "/catalog/{$this->category->slug}",
+            "/catalog/{$this->category->slug}/{$this->subcategory->slug}",
+            "/product/{$this->product->slug}", '/search', '/brand', '/blog',
+            "/blog/{$this->post->slug}"] as $uri) {
+            $response = $this->get($uri)->assertOk();
+            foreach (['mc.yandex.ru/metrika/tag.js?id=112644243', "ym(112644243, 'init'",
+                'webvisor: true', 'ssr: true', 'clickmap: true', "ecommerce: 'dataLayer'",
+                'referrer: document.referrer', 'url: location.href',
+                'accurateTrackBounce: true', 'trackLinks: true',
+                'https://mc.yandex.ru/watch/112644243'] as $expected) {
+                $response->assertSee($expected, false);
+            }
+            $this->assertSame(1, substr_count($response->getContent(), 'ym(112644243'));
+            $this->assertStringContainsString('https://mc.yandex.ru', $response->headers->get('Content-Security-Policy'));
+        }
+    }
+
+    public function test_yandexmetrika_is_absent_from_admin_html(): void
+    {
+        $this->get('/admin/login')->assertOk()->assertDontSee('mc.yandex.ru/metrika/tag.js', false);
+        $this->actingAs($this->admin);
+        $this->get('/admin')->assertOk()->assertDontSee('ym(112644243', false)
+            ->assertDontSee('mc.yandex.ru/metrika/tag.js', false);
+        $this->get('/admin/missing-metrika-page')->assertNotFound()
+            ->assertDontSee('ym(112644243', false);
     }
 
     private function seedPublicContent(): void
