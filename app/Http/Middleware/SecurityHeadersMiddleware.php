@@ -89,25 +89,36 @@ class SecurityHeadersMiddleware
      * - Скрипты: self + аналитика Google/Яндекс/Facebook
      * - Стили: self + Google Fonts
      * - Изображения: self + data: (inline) + https: (любые CDN)
-     * - Фреймы: только официальный Kaspi widget
+     * - Фреймы: официальный Kaspi widget и Яндекс Метрика
      */
     private function buildPublicCsp(): string
     {
+        // Regional collection endpoints from Yandex Metrika's CSP documentation.
+        $metrikaHosts = array_map(
+            static fn (string $suffix): string => 'mc.yandex.'.$suffix,
+            ['ru', 'az', 'by', 'co.il', 'com', 'com.am', 'com.ge', 'com.tr',
+                'ee', 'fr', 'kg', 'kz', 'lt', 'lv', 'md', 'tj', 'tm', 'uz']
+        );
+        $metrikaHosts = array_merge($metrikaHosts, ['mc.webvisor.com', 'mc.webvisor.org']);
+        $metrikaHttps = implode(' ', array_map(static fn (string $host): string => 'https://'.$host, $metrikaHosts));
+        $metrikaWss = implode(' ', array_map(static fn (string $host): string => 'wss://'.$host, $metrikaHosts));
+
         $directives = [
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
                 .'https://www.googletagmanager.com '
                 .'https://www.google-analytics.com '
                 .'https://connect.facebook.net '
-                .'https://mc.yandex.ru https://kaspi.kz',
+                .$metrikaHttps.' https://yastatic.net https://kaspi.kz',
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "font-src 'self' https://fonts.gstatic.com",
             "img-src 'self' data: https: blob:",
             "connect-src 'self' "
                 .'https://www.google-analytics.com '
-                .'https://mc.yandex.ru '
+                .$metrikaHttps.' '.$metrikaWss.' '
                 .'https://api.whatsapp.com',
-            'frame-src https://kaspi.kz',
+            'frame-src https://kaspi.kz blob: '.$metrikaHttps,
+            'child-src blob: '.$metrikaHttps,
             "object-src 'none'",
             "base-uri 'self'",
             "form-action 'self' https://wa.me",  // форма может вести на WhatsApp
