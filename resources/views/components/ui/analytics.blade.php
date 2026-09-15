@@ -1,5 +1,8 @@
 @php
-    $metrikaId = (string) config('services.yandex_metrika.counter_id', '');
+    $metrikaId = (string) \App\Services\CacheService::setting(
+        'yandex_metrika_id',
+        config('services.yandex_metrika.counter_id', '')
+    );
 @endphp
 
 @if(preg_match('/^[1-9][0-9]{0,14}$/D', $metrikaId))

@@ -2,7 +2,7 @@
 
 return [
     'yandex_metrika' => [
-        'counter_id' => env('YANDEX_METRIKA_COUNTER_ID', env('APP_ENV') === 'production' ? '112644243' : null),
+        'counter_id' => env('YANDEX_METRIKA_COUNTER_ID'),
     ],
     'kaspi' => [
         'internal_api_token' => env('KASPI_INTERNAL_API_TOKEN'),
