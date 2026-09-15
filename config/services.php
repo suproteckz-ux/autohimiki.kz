@@ -1,9 +1,6 @@
 <?php
 
 return [
-    'yandex_metrika' => [
-        'counter_id' => env('YANDEX_METRIKA_COUNTER_ID'),
-    ],
     'kaspi' => [
         'internal_api_token' => env('KASPI_INTERNAL_API_TOKEN'),
         'production_base_url' => env('KASPI_PRODUCTION_BASE_URL', 'https://autohimiki.kz'),
