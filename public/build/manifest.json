@@ -1,0 +1,20 @@
+{
+  "_alpine-mQoKdvlM.js": {
+    "file": "assets/alpine-mQoKdvlM.js",
+    "name": "alpine"
+  },
+  "resources/css/app.css": {
+    "file": "assets/app-BHdWbwLy.css",
+    "src": "resources/css/app.css",
+    "isEntry": true
+  },
+  "resources/js/app.js": {
+    "file": "assets/app-DjhM1OaW.js",
+    "name": "app",
+    "src": "resources/js/app.js",
+    "isEntry": true,
+    "imports": [
+      "_alpine-mQoKdvlM.js"
+    ]
+  }
+}
