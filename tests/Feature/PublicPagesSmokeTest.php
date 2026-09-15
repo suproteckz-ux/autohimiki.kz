@@ -342,8 +342,17 @@ class PublicPagesSmokeTest extends TestCase
 
     public function test_seo_page_and_filter_pages_load(): void
     {
-        $this->get("/{$this->seoPage->slug}")->assertOk();
-        $this->get("/{$this->category->slug}/{$this->brand->slug}")->assertOk();
+        $this->assertNull($this->seoPage->meta_title);
+        $this->assertNotEmpty($this->seoPage->title);
+        $bufferLevel = ob_get_level();
+        $this->get("/{$this->seoPage->slug}")->assertOk()
+            ->assertSee('<title>'.e($this->seoPage->title).'</title>', false);
+        $this->assertSame($bufferLevel, ob_get_level(), 'SEO page must close its output buffers');
+
+        $this->assertNull($this->seoFilter->meta_title);
+        $this->get("/{$this->category->slug}/{$this->brand->slug}")->assertOk()
+            ->assertSee('<title>'.e($this->seoFilter->name).'</title>', false);
+        $this->assertSame($bufferLevel, ob_get_level(), 'SEO filter must close its output buffers');
     }
 
     public function test_sitemaps_and_robots_load(): void

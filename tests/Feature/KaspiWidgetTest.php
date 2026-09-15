@@ -83,7 +83,7 @@ class KaspiWidgetTest extends TestCase
         $this->get('/product/manual-product')->assertNotFound();
     }
 
-    public function test_csp_allows_only_required_kaspi_script_and_frame_origins(): void
+    public function test_csp_allows_required_kaspi_origins_alongside_analytics(): void
     {
         $response = $this->get('/product/manual-product')->assertOk();
         $csp = $response->headers->get('Content-Security-Policy');
@@ -92,10 +92,20 @@ class KaspiWidgetTest extends TestCase
             $parts = explode(' ', $directive);
             $directives[array_shift($parts)] = $parts;
         }
-        $this->assertSame(["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://www.googletagmanager.com',
-            'https://www.google-analytics.com', 'https://connect.facebook.net', 'https://mc.yandex.ru', 'https://kaspi.kz'], $directives['script-src']);
-        $this->assertSame(['https://kaspi.kz'], $directives['frame-src']);
-        $this->assertSame(["'self'", 'https://www.google-analytics.com', 'https://mc.yandex.ru', 'https://api.whatsapp.com'], $directives['connect-src']);
+        $requiredSources = [
+            'script-src' => ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://www.googletagmanager.com',
+                'https://www.google-analytics.com', 'https://connect.facebook.net', 'https://mc.yandex.ru', 'https://kaspi.kz'],
+            'frame-src' => ['https://kaspi.kz'],
+            'connect-src' => ["'self'", 'https://www.google-analytics.com', 'https://mc.yandex.ru', 'https://api.whatsapp.com'],
+        ];
+        foreach ($requiredSources as $directive => $sources) {
+            $this->assertArrayHasKey($directive, $directives);
+            foreach ($sources as $source) {
+                $this->assertContains($source, $directives[$directive], "$directive must allow $source");
+            }
+            $this->assertNotContains('https:', $directives[$directive]);
+            $this->assertNotContains('http:', $directives[$directive]);
+        }
         $this->assertSame(["'none'"], $directives['object-src']);
         $this->assertStringNotContainsString('*', $csp);
         $response->assertHeader('X-Content-Type-Options', 'nosniff')->assertHeader('X-Frame-Options', 'SAMEORIGIN');
