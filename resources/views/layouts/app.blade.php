@@ -68,7 +68,7 @@
     @vite(['resources/css/app.css'])
 
     {{-- Шрифт: display=swap предотвращает FOIT --}}
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap"
           rel="stylesheet">
 
     {{-- Preload главного изображения (только если передано из контроллера) --}}
@@ -90,6 +90,7 @@
 {{-- bg-white явно устанавливает фон — предотвращает CLS flash --}}
 <body class="min-h-screen flex flex-col bg-white text-gray-800"
       style="background-color: #fff">
+    <a class="ah-skip" href="#main-content">Перейти к содержимому</a>
 
     {{-- header имеет min-height чтобы предотвратить CLS при загрузке --}}
     @include('components.ui.header')
@@ -103,7 +104,7 @@
     </div>
     @endif
 
-    <main class="flex-grow">
+    <main class="flex-grow" id="main-content" tabindex="-1">
         @yield('content')
     </main>
 
