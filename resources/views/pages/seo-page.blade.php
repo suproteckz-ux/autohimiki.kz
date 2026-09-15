@@ -5,7 +5,7 @@
     $items = $products ?? ($page->products ?? collect());
 @endphp
 
-@section('title', $entity->meta_title ?? $entity->name)
+@section('title', $entity->meta_title ?? $entity->title ?? $entity->name)
 @section('description', $entity->meta_description ?? '')
 
 @isset($canonical)
