@@ -115,7 +115,8 @@ async function run() {
   let browser;
   let context;
   let timer;
-  const diagnostic = (status) => ({ status, captcha: status === 'captcha_detected', url: null });
+  let widgetVerified = false;
+  const diagnostic = (status) => ({ status, captcha: status === 'captcha_detected', url: null, widget_verified: widgetVerified });
   try {
     const { chromium } = await import('playwright');
     browser = await chromium.launch({ headless: false, timeout: 15000 });
@@ -129,10 +130,11 @@ async function run() {
         captcha: () => captchaDetected(context),
       });
       if (waiting.status !== 'ready') return diagnostic(waiting.status);
+      widgetVerified = true;
       const {frame, frameUrl} = waiting;
       const links = await frame.locator('a[href]').evaluateAll((anchors) => anchors.map((a) => a.href)
         .filter((href) => href && !href.startsWith('javascript:') && !href.startsWith('#')));
-      if (links.length) return resolution(links, await captchaDetected(context));
+      if (links.length) return { ...resolution(links, await captchaDetected(context)), widget_verified: true };
       const buttons = frame.locator('button, [role="button"]');
       if (await buttons.count() !== 1) return diagnostic('ambiguous_urls');
       // Watch popup/navigation before clicking the one verified widget control.
@@ -145,7 +147,7 @@ async function run() {
       if (await captchaDetected(context)) return diagnostic('captcha_detected');
       const urls = context.pages().map((p) => p.url()).filter((value) => value !== source.href && value !== 'about:blank');
       if (frame.url() !== frameUrl.href) urls.push(frame.url());
-      return resolution(urls);
+      return { ...resolution(urls), widget_verified: true };
     };
     return await Promise.race([operation(), new Promise((resolve) => {
       timer = setTimeout(() => resolve(diagnostic('timeout')), 120000);

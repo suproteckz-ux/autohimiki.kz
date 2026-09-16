@@ -163,6 +163,14 @@ class CacheService
         Cache::forget(self::KEY_SITEMAP_INDEX);
     }
 
+    /** Invalidate only caches that embed product image references. */
+    public static function forgetProductContent(): void
+    {
+        Cache::forget(self::KEY_HOMEPAGE_HITS);
+        Cache::forget(self::KEY_HOMEPAGE_NEW);
+        Cache::forget(self::KEY_SITEMAP_PRODUCTS);
+    }
+
     /** Сброс кэша товаров */
     public static function forgetProducts(): void
     {

@@ -46,6 +46,9 @@ class KaspiProductionImportService
 
     public function import(array $payload): array
     {
+        if (KaspiRefreshPolicy::force($payload)) {
+            return app(KaspiContentRefreshService::class)->import($payload);
+        }
         KaspiSingleProductPolicy::assertSku($payload['sku'] ?? null);
         $lock = Cache::lock('kaspi-1c-import-'.hash('sha256', $payload['sku']), 300);
         if (! $lock->get()) {

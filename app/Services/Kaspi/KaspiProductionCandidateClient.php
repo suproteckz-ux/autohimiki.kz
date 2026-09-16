@@ -17,6 +17,10 @@ class KaspiProductionCandidateClient
         $limit = min(100, max(1, (int) ($options['limit'] ?? 25)));
         $cursor = (int) ($options['cursor'] ?? 0);
         $query = ['limit' => $limit, 'cursor' => $cursor];
+        $force = KaspiRefreshPolicy::force($options);
+        if ($force) {
+            $query['force_content_refresh'] = 'true';
+        }
         if (isset($options['sku'])) {
             $query['sku'] = trim($options['sku']);
         }
@@ -47,7 +51,17 @@ class KaspiProductionCandidateClient
                 || (isset($query['sku']) && $row['sku'] !== $query['sku'])) {
                 throw new \RuntimeException('candidate_invalid_row');
             }
-            $rows[] = array_intersect_key($row, array_flip(['sku', 'name', 'storefront_url']));
+            $fields = ['sku', 'name', 'storefront_url'];
+            if ($force) {
+                if (! is_int($row['product_id'] ?? null) || $row['product_id'] <= $cursor
+                    || ! is_string($row['state_fingerprint'] ?? null) || ! preg_match('/^[a-f0-9]{64}$/D', $row['state_fingerprint'])
+                    || ! is_int($row['current_photo_count'] ?? null) || ! is_int($row['current_attribute_count'] ?? null)
+                    || ! is_bool($row['current_description_present'] ?? null)) {
+                    throw new \RuntimeException('candidate_invalid_row');
+                }
+                $fields = [...$fields, 'product_id', 'state_fingerprint', 'current_photo_count', 'current_attribute_count', 'current_description_present'];
+            }
+            $rows[] = array_intersect_key($row, array_flip($fields));
         }
 
         return ['data' => $rows, 'next_cursor' => $next];

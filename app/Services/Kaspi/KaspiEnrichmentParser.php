@@ -54,7 +54,7 @@ class KaspiEnrichmentParser
     ];
 
     // Adapted from autohimiya-laravel: balanced BACKEND JSON, gallery normalization and specification parsing.
-    public function parse(string $html, ?string $url = null): array
+    public function parse(string $html, ?string $url = null, bool $refresh = false): array
     {
         if (trim($html) === '' || strlen($html) > 4000000 || ! mb_check_encoding($html, 'UTF-8')) {
             throw new \RuntimeException('parser_empty_or_invalid_html');
@@ -100,10 +100,15 @@ class KaspiEnrichmentParser
         if ($images === []) {
             throw new \RuntimeException('parser_images_missing');
         }
-        [$attributes] = $this->cleanAttributes([...$this->attributesFromBackendItem($item), ...$this->attributesFromHtml($xpath), ...$this->attributesFromJsonLd($jsonLd)]);
+        [$attributes, $excludedAttributes] = $this->cleanAttributes([...$this->attributesFromBackendItem($item, $refresh), ...$this->attributesFromHtml($xpath, $refresh), ...$this->attributesFromJsonLd($jsonLd, $refresh)], $refresh);
         $description = data_get($item, 'descriptions.0.text') ?: data_get($item, 'description') ?: data_get($item, 'card.description') ?: $this->rawDescription($xpath, [], $jsonLd);
 
-        return ['url' => $url, 'title' => $title, 'description' => KaspiSingleProductPolicy::description($this->cleanDescription($description)), 'images' => $images, 'attributes' => $attributes, 'backend_item_found' => $item !== []];
+        $result = ['url' => $url, 'title' => $title, 'description' => KaspiSingleProductPolicy::description($this->cleanDescription($description)), 'images' => $images, 'attributes' => $attributes, 'backend_item_found' => $item !== []];
+        if ($refresh) {
+            $result['refresh_attribute_issues'] = array_values(array_filter($excludedAttributes, fn ($a) => in_array($a['reason'], ['empty', 'too_long', 'conflicting_duplicate'], true)));
+        }
+
+        return $result;
     }
 
     private function collectImageCandidates(DOMXPath $xpath, array $jsonLd, array $item, string $html, array $meta): array
@@ -410,18 +415,40 @@ class KaspiEnrichmentParser
         return in_array($lower, ['описание', 'характеристики'], true);
     }
 
-    private function attributesFromBackendItem(array $item): array
+    private function attributesFromBackendItem(array $item, bool $strict = false): array
     {
         $attributes = [];
 
-        foreach ((array) data_get($item, 'specifications', []) as $group) {
+        $specifications = data_get($item, 'specifications', []);
+        if ($strict && (! is_array($specifications) || ! array_is_list($specifications))) {
+            throw new \RuntimeException('attributes_invalid', 422);
+        }
+        foreach ((array) $specifications as $group) {
+            if ($strict && (! is_array($group) || ! is_array($group['features'] ?? null) || ! array_is_list($group['features']))) {
+                throw new \RuntimeException('attributes_invalid', 422);
+            }
             foreach ((array) ($group['features'] ?? []) as $feature) {
+                if ($strict) {
+                    if (! is_array($feature) || ! is_array($feature['featureValues'] ?? null) || ! array_is_list($feature['featureValues'])
+                        || (isset($feature['name']) && ! is_string($feature['name'])) || (isset($feature['code']) && ! is_string($feature['code']))) {
+                        throw new \RuntimeException('attributes_invalid', 422);
+                    }
+                    foreach ($feature['featureValues'] as $entry) {
+                        $value = is_array($entry) ? ($entry['value'] ?? null) : $entry;
+                        if (! is_scalar($value) || (is_string($value) && trim($value) === '')) {
+                            throw new \RuntimeException('attributes_invalid', 422);
+                        }
+                    }
+                }
                 if (! is_array($feature)) {
                     continue;
                 }
 
                 $name = $this->attributeName($feature);
                 $values = $this->featureValues($feature);
+                if ($strict && (blank($name) || $values === [])) {
+                    throw new \RuntimeException('attributes_invalid', 422);
+                }
 
                 if (filled($name) && $values !== []) {
                     $attributes[] = [
@@ -469,7 +496,7 @@ class KaspiEnrichmentParser
         return array_values(array_unique(array_filter($values, 'filled')));
     }
 
-    private function attributesFromHtml(DOMXPath $xpath): array
+    private function attributesFromHtml(DOMXPath $xpath, bool $strict = false): array
     {
         $attributes = [];
         $rows = $xpath->query('//dl[contains(@class, "specifications-list__spec")][.//dt and .//dd]');
@@ -478,6 +505,9 @@ class KaspiEnrichmentParser
             $local = new DOMXPath($row->ownerDocument);
             $name = $this->nodeText($local->query('.//*[contains(@class, "specifications-list__spec-term-text")]', $row)?->item(0));
             $value = $this->nodeText($local->query('.//*[contains(@class, "specifications-list__spec-definition")]', $row)?->item(0));
+            if ($strict && (blank($name) || blank($value))) {
+                throw new \RuntimeException('attributes_invalid', 422);
+            }
 
             if (filled($name) && filled($value)) {
                 $attributes[] = ['name' => (string) $name, 'value' => (string) $value, 'source' => 'html.specifications'];
@@ -487,11 +517,18 @@ class KaspiEnrichmentParser
         return $attributes;
     }
 
-    private function attributesFromJsonLd(array $json): array
+    private function attributesFromJsonLd(array $json, bool $strict = false): array
     {
         $attributes = [];
         foreach ($json as $item) {
+            if ($strict && (! is_array(data_get($item, 'additionalProperty', [])) || ! array_is_list(data_get($item, 'additionalProperty', [])))) {
+                throw new \RuntimeException('attributes_invalid', 422);
+            }
             foreach ((array) data_get($item, 'additionalProperty', []) as $property) {
+                if ($strict && (! is_array($property) || ! is_string($property['name'] ?? null) || ! is_scalar($property['value'] ?? null)
+                    || blank($property['name']) || blank($property['value']))) {
+                    throw new \RuntimeException('attributes_invalid', 422);
+                }
                 if (is_array($property) && filled($property['name'] ?? null) && filled($property['value'] ?? null)) {
                     $attributes[] = ['name' => (string) $property['name'], 'value' => (string) $property['value'], 'source' => 'json_ld.additionalProperty'];
                 }
@@ -501,7 +538,7 @@ class KaspiEnrichmentParser
         return $attributes;
     }
 
-    private function cleanAttributes(array $attributes): array
+    private function cleanAttributes(array $attributes, bool $strict = false): array
     {
         $clean = [];
         $excluded = [];
@@ -537,12 +574,12 @@ class KaspiEnrichmentParser
 
             $key = mb_strtolower($name);
             if (isset($seen[$key])) {
-                $excluded[] = ['name' => $name, 'value' => $value, 'source' => $attribute['source'] ?? null, 'reason' => 'duplicate'];
+                $excluded[] = ['name' => $name, 'value' => $value, 'source' => $attribute['source'] ?? null, 'reason' => $strict && $seen[$key] !== $value ? 'conflicting_duplicate' : 'duplicate'];
 
                 continue;
             }
 
-            $seen[$key] = true;
+            $seen[$key] = $value;
             $clean[] = ['name' => $name, 'value' => $value];
         }
 

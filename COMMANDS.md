@@ -1,5 +1,164 @@
 # Команды для autohimiki.kz на hoster.kz (Plesk + CloudLinux)
 
+## Kaspi: одноразовое полное обновление контента — только локальный Windows
+
+Это отдельный одноразовый режим существующего `kaspi:push-production`, а не новая
+pipeline. Resolver и parser работают **только локально на Windows**. Playwright на
+production запрещён. Сервер принимает JSON через существующий HTTPS internal API
+и скачивает изображения существующим защищённым downloader.
+
+**Dry-run (без POST импорта, изменений товаров, медиа и инвалидации кэшей):**
+
+```powershell
+php artisan kaspi:push-production --all --force-content-refresh --dry-run
+```
+
+Проверить JSON-строки по каждому товару, причины пропусков и итоговый `approval_hash`.
+Затем, только после проверки результатов, выполнить с тем же scope:
+
+```powershell
+php artisan kaspi:push-production --all --force-content-refresh --approve=HASH
+```
+
+`HASH` — 64-символьный SHA-256 из dry-run. Без `--approve` выполнение force запрещено.
+`--approve` недопустим в normal-режиме и вместе с `--dry-run`. Ровно один scope обязателен:
+
+```powershell
+php artisan kaspi:push-production --sku=SKU --force-content-refresh --dry-run
+php artisan kaspi:push-production --limit=10 --force-content-refresh --dry-run
+```
+
+Для выполнения заменить `--dry-run` на `--approve=HASH`, сохранив scope.
+Обычная команда без force сохраняет прежнее поведение: main/description сохраняются,
+галерея дополняется, атрибуты объединяются без перезаписи старых значений.
+Команда без `--sku`, `--limit` или `--all` по-прежнему завершается ошибкой.
+
+### Готовность и классификация атрибутов
+
+Force включает полностью заполненные товары, но только активные, с точным валидным
+SKU и доступным storefront slug. Наличие SKU не подтверждает Kaspi: каждый товар
+проходит существующую проверку настоящего widget/iframe (SKU, merchant, city).
+Поиск по названию, предполагаемый URL и приблизительное совпадение SKU не используются.
+
+Нужны одновременно изображения, непустое санитизированное описание и непустые
+валидные характеристики. Пустое/некорректное поле или неоднозначные атрибуты означают
+**пропуск всего товара**. Частичного обновления нет.
+
+Правила `KaspiRefreshPolicy` намеренно используют закрытые списки. Сравнение имён:
+нижний регистр, удаление краевых пробелов, последовательности пробельных символов
+заменяются одним пробелом. Никаких эвристик по префиксу или значению.
+
+Заменяемые характеристики — только имена из явной карты существующего parser:
+`тип`, `тип полировки`, `назначение`, `объем упаковки`, `объем`, `аэрозоль`, `спрей`,
+`особенности`, `дополнительная информация`, `цвет`.
+Все старые ключи этого списка удаляются и заменяются входящими; отсутствующие в Kaspi
+старые значения не сохраняются. Входящие характеристики также должны принадлежать
+этому списку. Даже похожее неизвестное имя не принимается автоматически.
+
+Защищённые существующие ключи сохраняются вместе с исходным именем и JSON-значением:
+
+```text
+id sku name slug canonical_url category category_id brand_id
+price old_price quantity in_stock stock availability is_active published
+is_new is_hit is_popular meta_title meta_description meta_keywords h1 seo_text
+short_description usage_instructions faq main_image main_image_webp main_image_alt
+views sort_order created_at updated_at description attributes
+цена остаток остатки createdtime shoplink categoryid reviewslink code type
+measurementliteral countingliteral small medium large location endpoint link
+subtitle region regionid currency environment version url image value title
+```
+
+Это точные имена полей товара, существующих коммерческих исключений и служебных
+ключей parser. Неизвестный ключ (включая неизвестный идентификатор интеграции),
+массив вместо JSON-объекта, некорректный JSON, конфликт нормализованных имён либо
+вложенное значение заменяемой характеристики → `attributes_ambiguous`, весь товар
+пропускается. Пустой существующий объект, NULL или пустая строка допустимы.
+Пустые/дублирующиеся входящие пары отклоняются. Расширять списки можно только после
+отдельной проверки значения ключей, с тестами; текущий режим ничего не угадывает.
+
+### Approval и защита состояния
+
+Dry-run и выполнение сначала собирают **весь** ready-набор. SHA-256 связывает версию
+политики и канонический JSON payload каждого товара в порядке product ID, включая
+ID, точный SKU, storefront URL, fingerprint, разрешённый Kaspi URL, порядок image URL,
+санитизированное описание, нормализованные характеристики и source identity.
+Manifest хранится в памяти; локальный файл с секретами или payload не создаётся.
+
+Перед первым POST выполнение заново разрешает/парсит весь scope и сравнивает hash.
+Любой дрейф ready-набора, контента или состояния блокирует **все** POST этого запуска.
+Ошибка пагинации также запрещает выполнение. После частично успешного запуска нужен
+новый dry-run: старый hash более не соответствует изменившимся товарам.
+
+Fingerprint включает все колонки строки товара, все колонки gallery rows (по ID),
+merchant/city. Это не только `updated_at`; он также не является хешем файлов на диске.
+Перед локальным планированием кандидат повторно запрашивается по точному SKU;
+read-only preview подтверждает состояние. Сервер повторно проверяет ID/SKU/storefront
+и fingerprint до загрузок и под row lock перед commit. Дрейф → отказ без изменений
+этого товара. Существующие bearer/HTTPS/throttle/CDN/merchant/city guards сохранены.
+POST-флаг `force_content_refresh` принимает только JSON boolean; отсутствие или
+`false` означают обычный импорт. Для GET используются `true`/`false` или `1`/`0`.
+
+### Медиа, транзакции, кэш и ошибки
+
+Все входящие URL сначала скачиваются и проверяются. SHA-256 убирает дубликаты байтов,
+сохраняя порядок первого появления. Первый уникальный файл становится main;
+оставшиеся — gallery с последовательным `sort_order`. Старые gallery rows удаляются
+в одной транзакции с description/attributes/main. Старый `main_image_webp` сбрасывается.
+Остальные колонки товара, timestamps, URL history и записи других интеграций не меняются.
+
+Подготовка использует immutable `products/kaspi/{product_id}/{sha256}.{jpg|png|webp}`.
+При перехваченном сбое DB откатывается, новые неподключённые файлы удаляются.
+После commit удаляются только старые файлы этого формата, принадлежащие этому product ID,
+без ссылок из main/main_webp/gallery/path_webp других товаров. Ручные, общие и
+неоднозначные файлы остаются на диске, но исключаются из gallery этого товара.
+Ошибки удаления после commit возвращаются отдельно как `cleanup_warnings`;
+успешное обновление не объявляется откатившимся.
+
+После успеха забываются только `homepage_hits`, `homepage_new_products` и
+`sitemap.products` (он содержит image URL). Глобального flush, сброса настроек,
+категорий, брендов и redirects нет. Ошибка cache invalidation — отдельное предупреждение.
+
+Жёсткое завершение PHP/ОС между записью hash-файла и commit может оставить
+неподключённый hash-файл; распределённой транзакции DB/файловой системы нет.
+Не удалять такие файлы вслепую: сначала проверить ссылки и принадлежность.
+При отказе хранилища удалить новые файлы возвращается `image_cleanup_failed`.
+Временные скачивания используют существующий `php://temp` downloader и закрываются
+в `finally`; отдельные persistent temp-каталоги режим не создаёт.
+
+Лимиты не обрезают контент: максимум 12 image URL, 80 входящих атрибутов и 128 KiB JSON.
+Превышение возвращает `image_limit_exceeded`, `attribute_limit_exceeded` или
+`payload_too_large`. Остальные причины передаются только из безопасного allowlist;
+токены, произвольный response body и stack traces не печатаются. Неопределённый исход
+POST требует проверки состояния перед повтором; автоматического POST retry нет.
+
+### Отчёт и условия запуска
+
+По каждому товару выводятся ID/SKU/name, текущие и Kaspi counts/presence, действия,
+status/reason и fingerprint. Неизвестные после ошибки parser counts — `null`.
+Количество текущих фото — уникальные непустые пути main/gallery, не проверка всех байтов.
+Kaspi photo count — число URL до серверного SHA-256 dedupe.
+
+Summary: `total_candidates`, `with_kaspi_source`, `resolved`, `resolve_failed`, `parsed`,
+`parse_failed`, `ready`, `no_images`, `empty_description`, `empty_attributes`,
+`attributes_ambiguous`, `skipped`. Source означает проверенный iframe/control;
+resolved — получение уникального URL. Счётчики причин могут пересекаться.
+`ready` не гарантирует будущую доступность CDN: dry-run не скачивает серверные медиа.
+Execution добавляет `planned`, `processed` (POST attempts), `updated`, `failed`,
+`cleanup_warnings`, точные SKU/product_id/status/reason. Ошибка одного POST не
+останавливает последующие. Ошибка batch/POST даёт ненулевой exit code; безопасные
+пропуски планирования отражены в summary даже при exit code 0.
+
+Нужны согласованные локальная/серверная версии, Windows CLI, `APP_ENV=local`,
+`KASPI_LOCAL_BROWSER_ENABLED=true`, локальный Playwright, production HTTPS/token,
+совпадающие merchant/city и writable public storage на сервере. Перед выполнением
+проверить backup и отсутствие конкурирующих редакторов контента. Готовый набор
+хранится в памяти; для большого каталога использовать ограниченный scope.
+GET может создавать обычные HTTP/session/throttle logs/cache; dry-run не меняет
+товары, media rows/files и не инвалидирует storefront caches.
+
+Этот workflow не является разрешением на deployment или production execution:
+сначала review изменений, затем отдельный согласованный production dry-run.
+
 ## Проблема: Laravel Toolkit использует /usr/bin/php
 
 На hoster.kz с CloudLinux существуют два разных PHP:

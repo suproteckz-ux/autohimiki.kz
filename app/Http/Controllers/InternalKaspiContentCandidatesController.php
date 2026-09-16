@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Services\Kaspi\KaspiInternalApiAuthenticator;
 use App\Services\Kaspi\KaspiProductionCandidateService;
+use App\Services\Kaspi\KaspiRefreshPolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -27,6 +28,12 @@ class InternalKaspiContentCandidatesController extends Controller
             return response()->json(['error' => 'invalid_query', 'fields' => $validator->errors()], 422);
         }
 
-        return response()->json($service->list($validator->validated()))->header('Cache-Control', 'private, no-store');
+        try {
+            $force = KaspiRefreshPolicy::queryForce($request->query());
+        } catch (\RuntimeException $e) {
+            return response()->json(['error' => $e->getMessage()], 422);
+        }
+
+        return response()->json($service->list($validator->validated() + ['force_content_refresh' => $force]))->header('Cache-Control', 'private, no-store');
     }
 }
