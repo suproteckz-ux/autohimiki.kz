@@ -55,6 +55,12 @@
 
     {{-- ── Favicon ────────────────────────────────────────────── --}}
     <link rel="icon" href="{{ asset('favicon.ico') }}" type="image/x-icon">
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
+    <link rel="icon" href="{{ asset('favicon-32.png') }}" type="image/png" sizes="32x32">
+    <link rel="icon" href="{{ asset('favicon-16.png') }}" type="image/png" sizes="16x16">
+    <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}" sizes="180x180">
+    <link rel="manifest" href="{{ asset('site.webmanifest') }}">
+    <meta name="theme-color" content="#12161d">
     @if($settings['favicon'] ?? false)
     <link rel="icon" href="{{ asset('storage/' . $settings['favicon']) }}" type="image/png">
     @endif
@@ -68,7 +74,7 @@
     @vite(['resources/css/app.css'])
 
     {{-- Шрифт: display=swap предотвращает FOIT --}}
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap"
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Oswald:wght@500;600;700&display=swap"
           rel="stylesheet">
 
     {{-- Preload главного изображения (только если передано из контроллера) --}}

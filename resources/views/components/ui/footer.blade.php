@@ -8,7 +8,7 @@
 <footer class="ah-footer" id="store-contacts">
     <div class="ah-container">
         <div class="ah-footer-grid">
-            <div class="ah-footer-about"><a class="ah-logo" href="{{ route('home') }}"><span class="ah-logo-mark" aria-hidden="true">ϟ</span><span>AUTOHIMIKI<span class="ah-orange">.KZ</span></span></a><p>Автохимия и детейлинг в Алматы.<br>Проверенные бренды, широкий ассортимент, быстрая консультация.</p></div>
+            <div class="ah-footer-about"><a class="ah-logo" href="{{ route('home') }}"><x-ui.brand-mark /><span>AUTOHIMIKI<span class="ah-orange">.KZ</span></span></a><p>Автохимия и детейлинг в Алматы.<br>Проверенные бренды, широкий ассортимент, быстрая консультация.</p></div>
             <div><h2>Каталог</h2><nav aria-label="Каталог в подвале"><a href="{{ route('catalog') }}">Все товары</a><a href="{{ route('brands') }}">Бренды</a><a href="{{ route('blog') }}">Блог</a></nav></div>
             <div><h2>Покупателям</h2><p>Доставка по Алматы</p><p>Самовывоз</p><p>Консультация бесплатно</p>@if($whatsapp)<a href="https://wa.me/{{ $whatsapp }}" target="_blank" rel="noopener">Написать в WhatsApp ↗</a>@endif</div>
             <div><h2>Контакты</h2><address>@if($address)<p>{{ $address }}</p>@endif @if($phone)<a href="tel:{{ preg_replace('/\D/', '', $phone) }}">{{ $phone }}</a>@endif @if($email)<a href="mailto:{{ $email }}">{{ $email }}</a>@endif @if($instagram)<a href="{{ $instagram }}" target="_blank" rel="noopener">Instagram ↗</a>@endif</address></div>
