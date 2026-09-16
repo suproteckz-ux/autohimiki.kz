@@ -215,9 +215,15 @@ class ProductResource extends Resource
 
     private static function setActive(Collection $records, bool $active): void
     {
-        $count = Product::query()
-            ->whereKey($records->modelKeys())
-            ->update(['is_active' => $active]);
+        // Query updates skip publication/URL safeguards. Include every model's
+        // readable slug and 301 history in the same transaction.
+        $count = \Illuminate\Support\Facades\DB::transaction(function () use ($records, $active): int {
+            foreach ($records->sortBy('id') as $record) {
+                $record->update(['is_active' => $active]);
+            }
+
+            return $records->count();
+        });
 
         Notification::make()->success()
             ->title(($active ? 'Активировано' : 'Деактивировано')." товаров: {$count}")
