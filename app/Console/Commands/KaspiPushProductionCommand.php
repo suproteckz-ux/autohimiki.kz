@@ -230,7 +230,7 @@ class KaspiPushProductionCommand extends Command
                             }
                         });
                         $row = array_replace($row, ['status' => 'ready', 'photo_action' => 'replace_all',
-                            'description_action' => 'replace', 'attributes_action' => 'replace_content_preserve_system']);
+                            'description_action' => 'replace', 'attributes_action' => 'replace_all']);
                         $ready[] = $prepared['payload'];
                         $summary['ready']++;
                     } catch (\Throwable $e) {

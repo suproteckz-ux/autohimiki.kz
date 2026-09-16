@@ -43,7 +43,7 @@ class KaspiForceRefreshApiTest extends TestCase
         DB::table('brands')->insert(['id' => 1, 'name' => 'Brand', 'slug' => 'brand']);
         $this->id = DB::table('products')->insertGetId(['sku' => 'sku-1', 'name' => 'Manual', 'slug' => 'manual', 'category_id' => 1, 'brand_id' => 1,
             'price' => 500, 'old_price' => 600, 'quantity' => 7, 'in_stock' => true, 'is_active' => true, 'is_new' => true, 'is_hit' => true, 'is_popular' => true,
-            'description' => 'Old description', 'attributes' => '{"Цвет":"old","Объем":"stale","sku":"system-value","endpoint":{"keep":true}}',
+            'description' => 'Old description', 'attributes' => '{"Цвет":"old","Объем":"stale","sku":"system-value","Нестандартная характеристика":"stale"}',
             'canonical_url' => 'https://autohimiki.kz/product/manual', 'meta_title' => 'SEO title', 'meta_description' => 'SEO description',
             'h1' => 'H1', 'seo_text' => 'SEO text', 'short_description' => 'Short', 'usage_instructions' => 'Usage', 'faq' => '["FAQ"]',
             'main_image_alt' => 'Manual alt', 'views' => 19, 'sort_order' => 2, 'created_at' => '2025-01-01 00:00:00', 'updated_at' => '2025-02-01 00:00:00']);
@@ -133,7 +133,7 @@ class KaspiForceRefreshApiTest extends TestCase
             }
         }
         $this->assertSame('<p>New description</p>', $product['description']);
-        $this->assertSame(['sku' => 'system-value', 'endpoint' => ['keep' => true], 'Цвет' => 'New'], json_decode($product['attributes'], true));
+        $this->assertSame(['Цвет' => 'New'], json_decode($product['attributes'], true));
         $this->assertStringContainsString(hash('sha256', $this->image(1)), $product['main_image']);
         $gallery = DB::table('product_images')->orderBy('sort_order')->get();
         $this->assertCount(2, $gallery);
@@ -159,6 +159,31 @@ class KaspiForceRefreshApiTest extends TestCase
         $this->assertSame($after, $this->snapshot());
     }
 
+    public static function requestedSkus(): array
+    {
+        return [['РТ-00001286'], ['РТ-00000960'], ['РТ-00001093']];
+    }
+
+    #[DataProvider('requestedSkus')]
+    public function test_ordinary_unfamiliar_characteristics_replace_entire_object(string $sku): void
+    {
+        // Illustrative fixtures, not captured production payloads.
+        DB::table('products')->where('id', $this->id)->update(['sku' => $sku]);
+        $payload = $this->payload();
+        $payload['sku'] = $sku;
+        $expected = [];
+        foreach (['Бренд', 'Тип', 'Объем', 'Назначение', 'Страна производства', 'Форма выпуска',
+            'Цвет', 'Материал', 'Аромат', 'Особенности', 'Комплектация', 'Применение',
+            'Совместимость с покрытиями', 'type'] as $name) {
+            $expected[$name] = 'Новое значение';
+        }
+        $payload['content']['attributes'] = array_map(
+            fn ($name, $value) => ['name' => '  '.$name.'  ', 'value' => ' '.$value.' '],
+            array_keys($expected), array_values($expected));
+        $this->postJson(self::API, $payload)->assertOk()->assertJsonPath('status', 'imported');
+        $this->assertSame($expected, json_decode(DB::table('products')->value('attributes'), true));
+    }
+
     public static function invalidContent(): array
     {
         return ['empty description' => ['description', '', 'empty_description'],
@@ -166,7 +191,7 @@ class KaspiForceRefreshApiTest extends TestCase
             'empty attributes' => ['attributes', [], 'empty_attributes'],
             'malformed attributes' => ['attributes', 'invalid', 'invalid_payload'],
             'empty value' => ['attributes', [['name' => 'Цвет', 'value' => '']], 'attributes_invalid'],
-            'unknown incoming key' => ['attributes', [['name' => 'Неизвестно', 'value' => 'v']], 'attributes_ambiguous'],
+            'system incoming key' => ['attributes', [['name' => ' PRODUCT_ID ', 'value' => 'v']], 'commercial_attribute_not_allowed'],
             'no images' => ['images', [], 'no_images'],
             'too many images' => ['images', array_map(fn ($n) => self::CDN.$n.'.png', range(1, 13)), 'image_limit_exceeded'],
             'too many attributes' => ['attributes', array_fill(0, 81, ['name' => 'Цвет', 'value' => 'v']), 'attribute_limit_exceeded']];
@@ -184,17 +209,17 @@ class KaspiForceRefreshApiTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public static function ambiguousAttributes(): array
+    public static function malformedAttributes(): array
     {
-        return [['{"unknown_key":"keep"}'], ['["value"]'], ['{"Цвет":{"nested":true}}'], ['{"Цвет":"a"," цвет ":"b"}'], ['invalid']];
+        return [['{"":"value"}'], ['["value"]'], ['{"Цвет":{"nested":true}}'], ['{"Цвет":"a"," цвет ":"b"}'], ['invalid']];
     }
 
-    #[DataProvider('ambiguousAttributes')]
-    public function test_ambiguous_existing_attributes_skip_whole_product(string $json): void
+    #[DataProvider('malformedAttributes')]
+    public function test_malformed_existing_attributes_skip_whole_product(string $json): void
     {
         DB::table('products')->where('id', $this->id)->update(['attributes' => $json]);
         $before = $this->snapshot();
-        $this->postJson(self::API, $this->payload())->assertUnprocessable()->assertJsonPath('error', 'attributes_ambiguous');
+        $this->postJson(self::API, $this->payload())->assertUnprocessable()->assertJsonPath('error', 'attributes_invalid');
         $this->assertSame($before, $this->snapshot());
         Http::assertNothingSent();
     }

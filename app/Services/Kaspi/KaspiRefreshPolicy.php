@@ -4,22 +4,16 @@ namespace App\Services\Kaspi;
 
 use Illuminate\Support\Facades\DB;
 
-/** Deliberately closed lists: never infer ownership from a spelling/prefix/value. */
+/** Force refresh replaces display characteristics; product columns stay separate. */
 class KaspiRefreshPolicy
 {
-    // The characteristic names explicitly mapped by the existing Kaspi parser.
-    public const CONTENT_KEYS = ['тип', 'тип полировки', 'назначение', 'объем упаковки', 'объем',
-        'аэрозоль', 'спрей', 'особенности', 'дополнительная информация', 'цвет'];
-
-    // Product columns / commercial exclusions and exact parser service metadata names.
-    public const PROTECTED_KEYS = ['id', 'sku', 'name', 'slug', 'canonical_url', 'category', 'category_id', 'brand_id',
+    // Exact system/commercial names only. Ordinary characteristics need no whitelist.
+    public const FORBIDDEN_KEYS = ['id', 'product_id', 'sku', 'name', 'slug', 'canonical_url', 'category', 'category_id', 'brand_id',
         'price', 'old_price', 'quantity', 'in_stock', 'stock', 'availability', 'is_active', 'published',
         'is_new', 'is_hit', 'is_popular', 'meta_title', 'meta_description', 'meta_keywords', 'h1', 'seo_text',
         'short_description', 'usage_instructions', 'faq', 'main_image', 'main_image_webp', 'main_image_alt',
         'views', 'sort_order', 'created_at', 'updated_at', 'description', 'attributes',
-        'цена', 'остаток', 'остатки', 'createdtime', 'shoplink', 'categoryid', 'reviewslink', 'code', 'type',
-        'measurementliteral', 'countingliteral', 'small', 'medium', 'large', 'location', 'endpoint', 'link',
-        'subtitle', 'region', 'regionid', 'currency', 'environment', 'version', 'url', 'image', 'value', 'title'];
+        'цена', 'остаток', 'остатки', 'артикул', 'категория', 'идентификатор товара', 'статус публикации', 'currency'];
 
     public const REASONS = ['identity_changed', 'state_changed', 'no_images', 'empty_description', 'empty_attributes',
         'attributes_ambiguous', 'attributes_invalid', 'image_limit_exceeded', 'attribute_limit_exceeded',
@@ -52,31 +46,24 @@ class KaspiRefreshPolicy
         };
     }
 
-    public static function existing(?string $json): array
+    public static function existing(?string $json): void
     {
         if ($json === null || trim($json) === '' || trim($json) === 'null') {
-            return [];
+            return;
         }
         $object = json_decode($json);
         if (! $object instanceof \stdClass) {
-            throw new \RuntimeException('attributes_ambiguous', 422);
+            throw new \RuntimeException('attributes_invalid', 422);
         }
-        $preserved = [];
         $seen = [];
         foreach (get_object_vars($object) as $name => $value) {
             $key = KaspiSingleProductPolicy::attributeKey((string) $name);
-            if (isset($seen[$key])) {
-                throw new \RuntimeException('attributes_ambiguous', 422);
+            if ($key === '' || isset($seen[$key]) || ! is_scalar($value)) {
+                throw new \RuntimeException('attributes_invalid', 422);
             }
             $seen[$key] = true;
-            if (in_array($key, self::PROTECTED_KEYS, true)) {
-                $preserved[$name] = $value;
-            } elseif (! in_array($key, self::CONTENT_KEYS, true) || ! is_scalar($value)) {
-                throw new \RuntimeException('attributes_ambiguous', 422);
-            }
         }
 
-        return $preserved;
     }
 
     public static function incoming(array $attributes): void
@@ -85,8 +72,8 @@ class KaspiRefreshPolicy
             throw new \RuntimeException('empty_attributes', 422);
         }
         foreach ($attributes as $attribute) {
-            if (! in_array(KaspiSingleProductPolicy::attributeKey($attribute['name']), self::CONTENT_KEYS, true)) {
-                throw new \RuntimeException('attributes_ambiguous', 422);
+            if (in_array(KaspiSingleProductPolicy::attributeKey($attribute['name']), self::FORBIDDEN_KEYS, true)) {
+                throw new \RuntimeException('commercial_attribute_not_allowed', 422);
             }
         }
     }

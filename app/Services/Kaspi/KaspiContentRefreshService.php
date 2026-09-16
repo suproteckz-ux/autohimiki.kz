@@ -93,7 +93,7 @@ class KaspiContentRefreshService
                 $gallery = DB::table('product_images')->where('product_id', $product->id)->orderBy('sort_order')->orderBy('id')->get();
                 $obsolete = array_filter([$product->main_image, $product->main_image_webp,
                     ...$gallery->pluck('path')->all(), ...$gallery->pluck('path_webp')->all()]);
-                $attributes = KaspiRefreshPolicy::existing($product->attributes);
+                $attributes = [];
                 foreach ($payload['content']['attributes'] as $attribute) {
                     $attributes[$attribute['name']] = $attribute['value'];
                 }
