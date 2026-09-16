@@ -104,37 +104,39 @@ class SitemapController extends Controller
 
     public function products(): Response
     {
-        $xml = Cache::remember('sitemap.products', self::TTL, function () {
-            $items = '';
+        return $this->xmlResponse(Cache::remember('sitemap.products', self::TTL, fn () => $this->productXml()));
+    }
 
-            Product::active()
-                ->select(['id', 'slug', 'name', 'main_image', 'updated_at'])
-                ->orderBy('id')
-                ->chunk(500, function ($products) use (&$items) {
-                    foreach ($products as $product) {
-                        $imageTag = '';
-                        if ($product->main_image) {
-                            $imageTag = sprintf(
-                                '<image:image><image:loc>%s</image:loc><image:title>%s</image:title></image:image>',
-                                $this->escapeXml(asset('storage/' . $product->main_image)),
-                                $this->escapeXml($product->name)
-                            );
-                        }
+    /** Build the same product sitemap without reading or writing cache. */
+    public function productXml(): string
+    {
+        $items = '';
 
-                        $items .= $this->urlEntry(
-                            loc:        url("/product/{$product->slug}"),
-                            lastmod:    $product->updated_at,
-                            changefreq: 'weekly',
-                            priority:   '0.8',
-                            extra:      $imageTag
+        Product::active()
+            ->select(['id', 'slug', 'name', 'main_image', 'updated_at'])
+            ->orderBy('id')
+            ->chunk(500, function ($products) use (&$items) {
+                foreach ($products as $product) {
+                    $imageTag = '';
+                    if ($product->main_image) {
+                        $imageTag = sprintf(
+                            '<image:image><image:loc>%s</image:loc><image:title>%s</image:title></image:image>',
+                            $this->escapeXml(asset('storage/' . $product->main_image)),
+                            $this->escapeXml($product->name)
                         );
                     }
-                });
 
-            return $this->wrapUrlset($items, imageNs: true);
-        });
+                    $items .= $this->urlEntry(
+                        loc:        url("/product/{$product->slug}"),
+                        lastmod:    $product->updated_at,
+                        changefreq: 'weekly',
+                        priority:   '0.8',
+                        extra:      $imageTag
+                    );
+                }
+            });
 
-        return $this->xmlResponse($xml);
+        return $this->wrapUrlset($items, imageNs: true);
     }
 
     // ── Бренды ────────────────────────────────────────────────────

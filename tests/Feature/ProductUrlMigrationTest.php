@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\SitemapController;
 use App\Models\ImportBatch;
 use App\Models\Product;
 use App\Services\Import\FullProductImporter;
@@ -13,10 +14,12 @@ use App\Services\ProductUrls\ProductUrlMigration;
 use App\Services\ProductUrls\ProductUrlRollback;
 use App\Services\ProductUrls\ProductUrlVerifier;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ProductUrlMigrationTest extends TestCase
@@ -65,6 +68,129 @@ class ProductUrlMigrationTest extends TestCase
         $service = app(ProductUrlMigration::class);
 
         return $service->execute($service->plan()['approval']);
+    }
+
+    private function currentStateFixture(): array
+    {
+        $manifest = json_decode(file_get_contents(base_path('docs/URL02_PUBLIC_MANIFEST.json')), true, 512, JSON_THROW_ON_ERROR);
+        foreach ($manifest['rows'] as $row) {
+            $this->product(['sku' => $row['sku'], 'slug' => $row['new_slug']]);
+            $this->redirect('/product/'.$row['old_slug'], '/product/'.$row['new_slug']);
+        }
+        Http::preventStrayRequests();
+
+        return $manifest['rows'][0];
+    }
+
+    public function test_no_argument_verifier_and_json_are_read_only_and_successful(): void
+    {
+        $this->currentStateFixture();
+        $before = app(ProductUrlMigration::class)->snapshot();
+        Cache::shouldReceive('get', 'put', 'remember', 'forget', 'forever', 'flush')->never();
+        DB::enableQueryLog();
+        $this->artisan('products:verify-url-migration')->assertSuccessful();
+        $this->artisan('products:verify-url-migration --json')->assertSuccessful();
+        $result = app(ProductUrlVerifier::class)->verifyCurrentState();
+        $this->assertSame('ok', $result['status']);
+        $this->assertSame(140, $result['redirects_checked']);
+        $this->assertSame(0, $result['failed']);
+        foreach (DB::getQueryLog() as $query) {
+            $this->assertMatchesRegularExpression('/^select\b/i', $query['query']);
+        }
+        DB::disableQueryLog();
+        $this->assertEquals($before, app(ProductUrlMigration::class)->snapshot());
+        Http::assertNothingSent();
+    }
+
+    #[DataProvider('currentStateFailures')]
+    public function test_current_state_detects_regressions(string $case, string $counter): void
+    {
+        $row = $this->currentStateFixture();
+        $old = '/product/'.$row['old_slug'];
+        $new = '/product/'.$row['new_slug'];
+        switch ($case) {
+            case 'active_onec':
+                $this->product();
+                break;
+            case 'missing':
+                DB::table('redirects')->where('from_url', $old)->delete();
+                break;
+            case 'inactive':
+                DB::table('redirects')->where('from_url', $old)->update(['is_active' => false]);
+                break;
+            case 'wrong':
+                $other = DB::table('products')->where('sku', '!=', $row['sku'])->first();
+                DB::table('redirects')->where('from_url', $old)->update(['to_url' => '/product/'.$other->slug]);
+                break;
+            case 'self':
+                DB::table('redirects')->where('from_url', $old)->update(['to_url' => $old]);
+                break;
+            case 'loop':
+                $this->redirect($new, $old);
+                break;
+            case 'chain':
+                DB::table('redirects')->where('from_url', $old)->update(['to_url' => '/product/intermediate']);
+                $this->redirect('/product/intermediate', $new);
+                break;
+            case 'duplicate':
+                // Simulate broken storage: verifier must detect corruption without relying on the index.
+                DB::statement('DROP INDEX products_slug_unique');
+                $this->product(['slug' => $row['new_slug'], 'is_active' => false]);
+                break;
+            case 'canonical':
+                DB::table('products')->where('sku', $row['sku'])->update(['canonical_url' => 'https://autohimiki.kz'.$old]);
+                break;
+            case 'identity':
+                DB::table('products')->where('sku', $row['sku'])->update(['sku' => 'changed-sku']);
+                break;
+            case 'invalid':
+                $this->product(['slug' => 'invalid_slug']);
+                break;
+            case 'inactive_product':
+                DB::table('products')->where('sku', $row['sku'])->update(['is_active' => false]);
+                break;
+            case 'sitemap':
+                $xml = app(SitemapController::class)->productXml();
+                $this->mock(SitemapController::class)
+                    ->shouldReceive('productXml')->andReturn(str_replace($new, $old, $xml));
+                break;
+        }
+        $result = app(ProductUrlVerifier::class)->verifyCurrentState();
+        $this->assertSame('failed', $result['status']);
+        $this->assertGreaterThan(0, $result[$counter]);
+        $this->artisan('products:verify-url-migration --json')->assertFailed();
+        Http::assertNothingSent();
+    }
+
+    public static function currentStateFailures(): array
+    {
+        return [
+            ['active_onec', 'active_onec_slugs'], ['missing', 'redirect_errors'], ['inactive', 'redirect_errors'],
+            ['wrong', 'redirect_errors'], ['self', 'self_redirects'], ['loop', 'loops'], ['chain', 'chains'],
+            ['duplicate', 'duplicate_slugs'], ['canonical', 'canonical_errors'], ['identity', 'identity_errors'],
+            ['invalid', 'invalid_active_slugs'], ['inactive_product', 'redirect_errors'], ['sitemap', 'sitemap_errors'],
+        ];
+    }
+
+    public function test_current_state_uses_actual_slug_instead_of_manifest_proposal(): void
+    {
+        $row = $this->currentStateFixture();
+        DB::table('products')->where('sku', $row['sku'])->update(['slug' => 'actual-reviewed-slug-2']);
+        DB::table('redirects')->where('from_url', '/product/'.$row['old_slug'])
+            ->update(['to_url' => 'https://autohimiki.kz/product/actual-reviewed-slug-2']);
+        $this->assertSame('ok', app(ProductUrlVerifier::class)->verifyCurrentState()['status']);
+    }
+
+    public function test_json_output_is_parseable_on_success_and_input_error(): void
+    {
+        $this->currentStateFixture();
+        $this->assertSame(0, Artisan::call('products:verify-url-migration', ['--json' => true]));
+        $result = json_decode(Artisan::output(), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('current_state', $result['mode']);
+        $this->assertSame('ok', $result['status']);
+        $this->assertSame(1, Artisan::call('products:verify-url-migration', ['receipt' => 'missing-receipt.json', '--json' => true]));
+        $result = json_decode(Artisan::output(), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('error', $result['status']);
     }
 
     public function test_migration_is_one_hop_with_new_canonical_sitemap_and_unchanged_business_data(): void
@@ -471,6 +597,14 @@ class ProductUrlMigrationTest extends TestCase
         $this->assertSame(0, $result['failed']);
         $this->assertEquals($before, app(ProductUrlMigration::class)->snapshot());
         Http::assertSentCount(3);
+        $path = tempnam(sys_get_temp_dir(), 'url021-receipt-');
+        try {
+            file_put_contents($path, json_encode($receipt, JSON_THROW_ON_ERROR));
+            $this->artisan('products:verify-url-migration', ['receipt' => $path])->assertSuccessful();
+            $this->artisan('products:verify-url-migration', ['receipt' => $path, '--json' => true])->assertSuccessful();
+        } finally {
+            unlink($path);
+        }
     }
 
     public function test_operator_verifier_reports_chain_canonical_sitemap_and_data_regressions(): void
