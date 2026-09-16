@@ -13,6 +13,27 @@ class Product extends Model
 {
     use SeoMetaTrait;
 
+    /** Keep observer-created URL history in the same transaction as the product. */
+    public function save(array $options = [])
+    {
+        return $this->getConnection()->transaction(function () use ($options) {
+            if ($this->exists && ($this->isDirty('slug') || $this->isDirty('is_active'))) {
+                $current = $this->newQuery()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
+                if ($current->slug !== $this->getRawOriginal('slug')
+                    || (bool) $current->is_active !== (bool) $this->getRawOriginal('is_active')
+                    || $current->name !== $this->getRawOriginal('name')
+                    || $current->canonical_url !== $this->getRawOriginal('canonical_url')) {
+                    throw \Illuminate\Validation\ValidationException::withMessages(['slug' => 'Товар изменился. Обновите страницу.']);
+                }
+            }
+            if (! parent::save($options)) {
+                throw new \RuntimeException('product_save_cancelled; URL_history_rolled_back');
+            }
+
+            return true;
+        });
+    }
+
     protected $fillable = [
         'category_id', 'brand_id',
         'name', 'slug', 'sku',

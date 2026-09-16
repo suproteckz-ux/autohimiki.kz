@@ -259,16 +259,13 @@ class FullProductImporter
      */
     private function generateUniqueSlug(string $name): string
     {
-        $base  = Str::lower(Str::slug($name));
-        $slug  = $base;
-        $count = 1;
+        $allocator = app(\App\Services\ProductUrls\ProductSlugAllocator::class);
+        $reserved = $allocator->reserved(
+            DB::table('products')->select('slug')->get()->all(),
+            DB::table('redirects')->get()->all(),
+        );
 
-        while (Product::where('slug', $slug)->exists()) {
-            $slug = "{$base}-{$count}";
-            $count++;
-        }
-
-        return $slug;
+        return $allocator->generate($name, $reserved)['slug'];
     }
 
     /**

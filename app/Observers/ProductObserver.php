@@ -3,92 +3,83 @@
 namespace App\Observers;
 
 use App\Models\Product;
-use App\Models\Redirect;
-use Illuminate\Support\Facades\Cache;
+use App\Services\ProductUrls\ProductSlugAllocator;
+use App\Services\ProductUrls\ProductUrlMigration;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
-/**
- * ProductObserver
- *
- * Решает три задачи:
- * 1. Приводит slug к lowercase перед сохранением.
- * 2. При смене slug — создаёт 301-редирект со старого URL на новый.
- * 3. После изменения/удаления — сбрасывает кэш sitemap и редиректов.
- */
 class ProductObserver
 {
-    /**
-     * Вызывается ДО сохранения (и create, и update).
-     * Нормализуем slug — всегда lowercase.
-     */
     public function saving(Product $product): void
     {
         if (! empty($product->slug)) {
             $product->slug = Str::lower($product->slug);
         }
-
-        // Авто-генерация alt изображения если пустой
-        if (empty($product->main_image_alt) && ! empty($product->name)) {
+        try {
+            // Imports still create inactive drafts. Later name changes never
+            // enter this publication transition.
+            $willBeActive = $product->exists ? $product->is_active : ($product->is_active ?? true);
+            if ($willBeActive && (! $product->exists || ! $product->getRawOriginal('is_active'))
+                && str_starts_with((string) $product->slug, 'onec-')) {
+                [$products, $redirects] = app(ProductUrlMigration::class)->snapshot(true);
+                $allocator = app(ProductSlugAllocator::class);
+                $reserved = $allocator->reserved($products, $redirects);
+                $technicalSlug = $product->slug;
+                $product->slug = $allocator->generate($product->name, $reserved)['slug'];
+                // A brand-new active model has no updating event to reconcile canonical.
+                if (! $product->exists && $product->canonical_url !== null && $product->canonical_url !== '') {
+                    $base = app(ProductUrlMigration::class)->base();
+                    if (! in_array($product->canonical_url, [$base.'/product/'.$technicalSlug, '/product/'.$technicalSlug], true)) {
+                        throw new \RuntimeException('custom_canonical_requires_review');
+                    }
+                    $product->canonical_url = $base.'/product/'.$product->slug;
+                }
+            }
+            if ((! $product->exists || $product->isDirty('slug')) && ! ProductSlugAllocator::valid((string) $product->slug)) {
+                throw new \RuntimeException('Slug: только латинские буквы, цифры и одиночные дефисы; максимум 255 символов.');
+            }
+            if (! $product->exists) {
+                [$products, $redirects] = app(ProductUrlMigration::class)->snapshot(true);
+                $reserved = app(ProductSlugAllocator::class)->reserved($products, $redirects);
+                if (isset($reserved[$product->slug])) {
+                    throw new \RuntimeException('Этот адрес зарезервирован историей перенаправлений.');
+                }
+            }
+        } catch (\RuntimeException $e) {
+            throw ValidationException::withMessages(['slug' => $e->getMessage()]);
+        }
+        if ((! $product->exists || $product->isDirty('name')) && empty($product->main_image_alt) && ! empty($product->name)) {
             $brandName = $product->brand?->name ?? '';
-            $product->main_image_alt = trim($product->name . ($brandName ? " — {$brandName}" : ''));
+            $product->main_image_alt = trim($product->name.($brandName ? " — {$brandName}" : ''));
         }
     }
 
-    /**
-     * Вызывается ДО UPDATE (не затрагивает create).
-     * Если slug изменился — фиксируем старый для редиректа.
-     */
     public function updating(Product $product): void
     {
         if (! $product->isDirty('slug')) {
             return;
         }
-
-        $oldSlug = $product->getOriginal('slug');
-        $newSlug = $product->slug; // уже нормализован в saving()
-
-        if (empty($oldSlug) || $oldSlug === $newSlug) {
-            return;
+        try {
+            $service = app(ProductUrlMigration::class);
+            [$products, $redirects] = $service->snapshot(true);
+            $original = (object) $product->getRawOriginal();
+            $original->canonical_url = $product->canonical_url;
+            $change = $service->change($original, $product->slug, $products, $redirects);
+            $product->canonical_url = $change['canonical_after'];
+            $service->writeRedirects($original->slug, $product->slug, $change['history_ids']);
+        } catch (\RuntimeException $e) {
+            throw ValidationException::withMessages(['slug' => $e->getMessage()]);
         }
-
-        $oldUrl = "/product/{$oldSlug}";
-        $newUrl = "/product/{$newSlug}";
-
-        // Создаём или обновляем редирект
-        Redirect::updateOrCreate(
-            ['from_url' => $oldUrl],
-            ['to_url' => $newUrl, 'is_active' => true]
-        );
-
-        // Если существует цепочка редиректов, ведущих на oldUrl — обновляем их
-        // (A→B→C превращаем в A→C)
-        Redirect::where('to_url', $oldUrl)
-            ->where('is_active', true)
-            ->update(['to_url' => $newUrl]);
-
-        // Сбрасываем кэш редиректов
-        Cache::forget('active_redirects');
     }
 
-    /**
-     * После сохранения — сбрасываем кэш sitemap.
-     */
     public function saved(Product $product): void
     {
-        $this->forgetSitemapCache();
+        DB::afterCommit(fn () => ProductUrlMigration::invalidate());
     }
 
-    /**
-     * После удаления — сбрасываем кэш sitemap.
-     */
     public function deleted(Product $product): void
     {
-        $this->forgetSitemapCache();
-    }
-
-    private function forgetSitemapCache(): void
-    {
-        Cache::forget('sitemap.products');
-        Cache::forget('sitemap.index');
+        DB::afterCommit(fn () => ProductUrlMigration::invalidate());
     }
 }

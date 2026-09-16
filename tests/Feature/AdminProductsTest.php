@@ -42,6 +42,7 @@ class AdminProductsTest extends TestCase
         $this->runMigration('2025_01_002_create_brands_table.php');
         $this->runMigration('2025_01_003_create_products_table.php');
         $this->runMigration('2025_01_004_create_product_images_table.php');
+        $this->runMigration('2025_01_012_create_redirects_table.php');
 
         $this->admin = User::query()->create([
             'name' => 'Admin',
@@ -148,6 +149,22 @@ class AdminProductsTest extends TestCase
         $this->assertFalse($first->fresh()->is_active);
         $this->assertTrue($second->fresh()->is_active);
         $this->assertFalse($unrelated->fresh()->is_active);
+    }
+
+    public function test_bulk_publication_converts_onec_drafts_before_they_become_visible(): void
+    {
+        $first = $this->product('onec-00000000-0000-4000-8000-000000000001', false);
+        $second = $this->product('onec-00000000-0000-4000-8000-000000000002', false);
+        // The fixture prefixes slugs; replace only in this disposable test DB.
+        \Illuminate\Support\Facades\DB::table('products')->where('id', $first->id)
+            ->update(['slug' => 'onec-00000000-0000-4000-8000-000000000001', 'name' => 'Same cleaner']);
+        \Illuminate\Support\Facades\DB::table('products')->where('id', $second->id)
+            ->update(['slug' => 'onec-00000000-0000-4000-8000-000000000002', 'name' => 'Same cleaner']);
+        Livewire::test(ListProducts::class)->callTableBulkAction('activate', [$first->fresh(), $second->fresh()])->assertHasNoErrors();
+        $this->assertSame('same-cleaner', $first->fresh()->slug);
+        $this->assertSame('same-cleaner-1', $second->fresh()->slug);
+        $this->assertTrue($first->fresh()->is_active);
+        $this->assertSame(2, \Illuminate\Support\Facades\DB::table('redirects')->count());
     }
 
     public function test_bulk_delete_requires_confirmation_and_deletes_only_selected_records(): void
