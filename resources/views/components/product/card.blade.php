@@ -1,9 +1,9 @@
-@props(['product'])
+@props(['product', 'variant' => 'default'])
 @php
     $wa = \App\Services\CacheService::setting('whatsapp', '');
     $waMsg = urlencode('Хочу заказать: ' . $product->name . ' — autohimiki.kz');
 @endphp
-<article class="ah-product-card">
+<article @class(['ah-product-card', 'ah-product-card--handoff' => $variant === 'handoff'])>
     <a href="{{ route('product.show', $product->slug) }}" class="ah-product-image" aria-label="{{ $product->name }}">
         @if(!empty($product->main_image))
             <img src="{{ asset('storage/' . ($product->main_image_webp ?? $product->main_image)) }}" alt="{{ $product->main_image_alt ?? $product->name }}" loading="lazy" width="320" height="320">
@@ -15,11 +15,12 @@
         </div>
     </a>
     <div class="ah-product-copy">
-        @if(!empty($product->brand))<p class="ah-product-brand">{{ $product->brand->name }}</p>@endif
+        @if(!empty($product->brand))<p class="ah-product-brand">{{ $product->brand->name }}</p>
+        @elseif($variant === 'handoff')<p class="ah-product-brand ah-product-brand-empty" aria-hidden="true">&nbsp;</p>@endif
         <a class="ah-product-name" href="{{ route('product.show', $product->slug) }}">{{ $product->name }}</a>
         <p class="ah-stock {{ ($product->in_stock ?? true) ? '' : 'ah-stock-empty' }}"><span aria-hidden="true">●</span> {{ ($product->in_stock ?? true) ? 'В наличии' : 'Нет в наличии' }}</p>
         <div class="ah-product-price"><strong>{{ number_format($product->price, 0, '.', ' ') }} ₸</strong>@if(!empty($product->old_price) && $product->old_price > $product->price)<del>{{ number_format($product->old_price, 0, '.', ' ') }} ₸</del>@endif</div>
-        @if($wa)<a href="https://wa.me/{{ $wa }}?text={{ $waMsg }}" target="_blank" rel="noopener" class="ah-product-cta"><span aria-hidden="true">↗</span> Купить в WhatsApp</a>
+        @if($wa)<a href="https://wa.me/{{ $wa }}?text={{ $waMsg }}" target="_blank" rel="noopener" @class(['ah-product-cta', 'ah-product-cta--unavailable' => $variant === 'handoff' && !($product->in_stock ?? true)])><span aria-hidden="true">●</span> {{ ($variant === 'handoff' && !($product->in_stock ?? true)) ? 'Уточнить наличие' : 'Купить в WhatsApp' }}</a>
         @else<a href="{{ route('product.show', $product->slug) }}" class="ah-product-cta">Подробнее <span aria-hidden="true">→</span></a>@endif
     </div>
 </article>

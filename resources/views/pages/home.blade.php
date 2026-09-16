@@ -5,36 +5,56 @@
 <link rel="canonical" href="{{ url('/') }}">
 @endsection
 @section('content')
-@php $wa = \App\Services\CacheService::setting('whatsapp', ''); @endphp
+@php
+    $wa = \App\Services\CacheService::setting('whatsapp', '');
+    $heroProducts = $hits->filter(fn ($product) => !empty($product->main_image))->take(5)->values();
+    $heroCount = $heroProducts->count();
+@endphp
 <div class="ah-home">
 <section class="ah-hero">
-    <div class="ah-container ah-hero-grid">
+    <div class="ah-container ah-hero-grid {{ $heroCount ? '' : 'ah-hero-grid--no-products' }}">
         <div class="ah-hero-copy">
             <p class="ah-eyebrow">Алматы · Автохимия · Детейлинг</p>
             <h1>Автохимия<br><span>для вашего авто</span></h1>
             <p class="ah-hero-description">Автошампуни, полироли, антидождь, детейлинг.<br>Проверенные бренды. Подберём средства для ухода бесплатно.</p>
             <div class="ah-hero-actions"><a class="ah-button ah-button-orange" href="{{ route('catalog') }}">Перейти в каталог <span aria-hidden="true">→</span></a>
-                @if($wa)<a class="ah-button ah-button-wa" href="https://wa.me/{{ $wa }}" target="_blank" rel="noopener">Написать в WhatsApp</a>
-                @else<button class="ah-button ah-button-outline" type="button" x-data @click="$dispatch('open-lead-modal')">Получить консультацию</button>@endif
+                @if($hits->count())<a class="ah-hero-secondary" href="#home-hits">Популярные товары</a>@endif
             </div>
             <div class="ah-stats">@foreach([['800+', 'товаров'], ['30+', 'брендов'], ['5 лет', 'на рынке']] as [$value, $label])<div><strong>{{ $value }}</strong><span>{{ $label }}</span></div>@endforeach</div>
         </div>
-        <div class="ah-hero-aside">
-            <a class="ah-promo" href="{{ route('catalog') }}"><span class="ah-badge">Уход за авто</span><div><h2>Готов к любой дороге</h2><p>Средства для кузова, салона и стёкол <span aria-hidden="true">↗</span></p></div></a>
-            <div class="ah-quick-links"><h2>Выбор за вами</h2><div><a href="{{ route('catalog') }}">Каталог товаров ↗</a><a href="{{ route('brands') }}">Проверенные бренды ↗</a><a href="{{ route('blog') }}">Советы по уходу ↗</a></div></div>
+        <div class="ah-hero-visual" data-product-count="{{ $heroCount }}">
+            @forelse($heroProducts as $product)
+                <a class="ah-hero-product ah-hero-product--{{ $loop->iteration }}" href="{{ route('product.show', $product->slug) }}" aria-label="{{ $product->name }}">
+                    <picture>
+                        @if(!empty($product->main_image_webp))<source srcset="{{ asset('storage/' . $product->main_image_webp) }}" type="image/webp">@endif
+                        <img src="{{ asset('storage/' . $product->main_image) }}"
+                             alt="{{ $product->main_image_alt ?? $product->name }}"
+                             width="320" height="420"
+                             loading="{{ $loop->first ? 'eager' : 'lazy' }}" decoding="async"
+                             @if($loop->first) fetchpriority="high" @endif>
+                    </picture>
+                    <span>{{ $product->brand?->name ?: \Illuminate\Support\Str::limit($product->name, 18) }}</span>
+                </a>
+            @empty
+                <div class="ah-hero-empty"><x-ui.brand-mark /><strong>Профессиональный уход</strong><span>для вашего автомобиля</span></div>
+            @endforelse
+            @if($heroCount)
+                <p class="ah-hero-visual-note">Реальные товары из нашего каталога</p>
+            @endif
         </div>
     </div>
 </section>
 @if($categories->count())
 <section class="ah-section ah-section-muted" id="home-categories"><div class="ah-container">
     <x-ui.section-heading title="Категории товаров" :href="route('catalog')" link="Все категории" />
-    <div class="ah-category-grid">@foreach($categories as $category)<x-category.card :category="$category" />@endforeach</div>
+    <div class="ah-category-grid ah-home-category-grid">@foreach($categories as $category)<x-category.card :category="$category" variant="handoff" />@endforeach</div>
+    <a class="ah-all-categories" href="{{ route('catalog') }}">Все {{ $categories->count() }} категорий <span aria-hidden="true">→</span></a>
 </div></section>
 @endif
 @if($hits->count())
 <section class="ah-section" id="home-hits"><div class="ah-container">
     <x-ui.section-heading title="Хиты продаж" :href="route('catalog')" />
-    <div class="ah-product-grid">@foreach($hits as $product)<x-product.card :product="$product" />@endforeach</div>
+    <div class="ah-product-grid ah-home-product-grid">@foreach($hits as $product)<x-product.card :product="$product" variant="handoff" />@endforeach</div>
 </div></section>
 @endif
 <section class="ah-trust" id="advantages"><div class="ah-container ah-trust-grid">

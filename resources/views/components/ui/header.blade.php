@@ -3,13 +3,13 @@
     $whatsapp = \App\Services\CacheService::setting('whatsapp', '');
 @endphp
 <header class="ah-header" x-data="{ mobileOpen: false }" @keydown.escape.window="if (mobileOpen) { mobileOpen = false; $refs.menuButton.focus() }">
-    <div class="ah-topbar"><div class="ah-container"><span>Алматы · Автохимия и детейлинг</span><span>Доставка по Казахстану</span></div></div>
+    <div class="ah-topbar"><div class="ah-container"><span>Алматы · Автохимия и детейлинг</span><span>Доставка по Казахстану</span><span>Ежедневно 9:00–20:00</span></div></div>
     <div class="ah-container ah-header-main">
-        <a class="ah-logo" href="{{ route('home') }}" aria-label="Autohimiki.kz — главная"><span class="ah-logo-mark" aria-hidden="true">ϟ</span><span>AUTOHIMIKI<span class="ah-orange">.KZ</span><small>АВТОХИМИЯ И ДЕТЕЙЛИНГ</small></span></a>
+        <a class="ah-logo" href="{{ route('home') }}" aria-label="Autohimiki.kz — главная"><x-ui.brand-mark /><span>AUTOHIMIKI<span class="ah-orange">.KZ</span><small>АВТОХИМИЯ И ДЕТЕЙЛИНГ</small></span></a>
         <div class="ah-header-search"><x-ui.search /></div>
         <div class="ah-header-actions">
             @if($phone)<a class="ah-header-phone" href="tel:{{ preg_replace('/\D/', '', $phone) }}">{{ $phone }}</a>@endif
-            @if($whatsapp)<a class="ah-button ah-button-wa ah-header-wa" href="https://wa.me/{{ $whatsapp }}" target="_blank" rel="noopener" aria-label="Написать в WhatsApp"><span aria-hidden="true">↗</span><span class="ah-wa-label">WhatsApp</span></a>@endif
+            @if($whatsapp)<a class="ah-button ah-button-wa ah-header-wa" href="https://wa.me/{{ $whatsapp }}" target="_blank" rel="noopener" aria-label="Написать в WhatsApp"><span class="ah-header-wa-dot" aria-hidden="true"></span><span class="ah-header-wa-arrow" aria-hidden="true">↗</span><span class="ah-wa-label">WhatsApp</span></a>@endif
             <button type="button" class="ah-menu-button" x-ref="menuButton" @click="mobileOpen = !mobileOpen" :aria-expanded="mobileOpen.toString()" aria-controls="mobile-navigation" aria-label="Открыть меню"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
         </div>
     </div>
