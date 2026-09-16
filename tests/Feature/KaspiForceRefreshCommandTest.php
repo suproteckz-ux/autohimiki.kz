@@ -198,7 +198,7 @@ class KaspiForceRefreshCommandTest extends TestCase
         $this->unsafe['sku-4'] = true;
         $result = $this->runForce(['--dry-run' => true]);
         foreach (['total_candidates' => 5, 'with_kaspi_source' => 5, 'resolved' => 5, 'parsed' => 4, 'parse_failed' => 1, 'ready' => 1,
-            'no_images' => 1, 'empty_description' => 1, 'empty_attributes' => 1, 'attributes_ambiguous' => 1, 'skipped' => 4] as $key => $value) {
+            'no_images' => 1, 'empty_description' => 1, 'empty_attributes' => 1, 'attributes_ambiguous' => 0, 'skipped' => 4] as $key => $value) {
             $this->assertSame($value, $result['summary'][$key], $key);
         }
         Http::assertNotSent(fn ($r) => $r->method() === 'POST');

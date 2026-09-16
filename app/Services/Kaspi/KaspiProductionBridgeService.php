@@ -98,7 +98,7 @@ class KaspiProductionBridgeService
                 throw new \RuntimeException('state_changed', 409);
             }
             if (($state['attributes_safe'] ?? null) !== true) {
-                throw new \RuntimeException('attributes_ambiguous', 422);
+                throw new \RuntimeException('attributes_invalid', 422);
             }
 
             return ['payload' => $payload, 'preview' => $state];
