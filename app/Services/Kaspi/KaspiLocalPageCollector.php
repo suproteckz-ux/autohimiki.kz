@@ -8,6 +8,16 @@ class KaspiLocalPageCollector
 
     public function collectUrl(string $url): array
     {
+        return $this->collect($url, false);
+    }
+
+    public function collectRefreshUrl(string $url): array
+    {
+        return $this->collect($url, true);
+    }
+
+    private function collect(string $url, bool $refresh): array
+    {
         $this->guard->assertAllowed();
         if (KaspiUrlRules::product($url) !== $url) {
             throw new \RuntimeException('wrong_product');
@@ -31,6 +41,6 @@ class KaspiLocalPageCollector
             throw new \RuntimeException('wrong_product');
         }
 
-        return $this->parser->parse((string) ($result['html'] ?? ''), $url);
+        return $this->parser->parse((string) ($result['html'] ?? ''), $url, $refresh);
     }
 }

@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\Kaspi\KaspiContentRefreshService;
 use App\Services\Kaspi\KaspiInternalApiAuthenticator;
 use App\Services\Kaspi\KaspiProductionImportService;
 use App\Services\Kaspi\KaspiProductionPayloadValidator;
+use App\Services\Kaspi\KaspiRefreshPolicy;
+use App\Services\Kaspi\KaspiSingleProductPolicy;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -21,10 +24,12 @@ class InternalKaspiContentImportController extends Controller
         }
         try {
             if ($request->isMethod('GET')) {
-                if (array_diff(array_keys($request->query()), ['sku'])) {
+                if (array_diff(array_keys($request->query()), ['sku', 'force_content_refresh'])) {
                     throw new \RuntimeException('invalid_query', 422);
                 }
-                $result = $service->preview($request->query('sku'));
+                $force = KaspiRefreshPolicy::queryForce($request->query());
+                KaspiSingleProductPolicy::assertSku($request->query('sku'));
+                $result = $force ? app(KaspiContentRefreshService::class)->preview($request->query('sku')) : $service->preview($request->query('sku'));
             } else {
                 if (! $request->isJson()) {
                     throw new \RuntimeException('json_required', 422);
@@ -32,7 +37,8 @@ class InternalKaspiContentImportController extends Controller
                 // Read original JSON: global TrimStrings must not turn a non-exact SKU into the allowed SKU.
                 $raw = $request->getContent();
                 if (strlen($raw) > 131072) {
-                    throw new \RuntimeException('invalid_payload', 422);
+                    $oversized = json_decode($raw, true);
+                    throw new \RuntimeException(is_array($oversized) && ($oversized['force_content_refresh'] ?? false) === true ? 'payload_too_large' : 'invalid_payload', 422);
                 }
                 $decoded = json_decode($raw, true);
                 if (! is_array($decoded) || array_is_list($decoded)) {

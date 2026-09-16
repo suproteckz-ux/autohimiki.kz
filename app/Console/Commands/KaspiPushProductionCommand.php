@@ -5,13 +5,14 @@ namespace App\Console\Commands;
 use App\Services\Kaspi\KaspiLocalBrowserGuard;
 use App\Services\Kaspi\KaspiProductionBridgeService;
 use App\Services\Kaspi\KaspiProductionCandidateClient;
+use App\Services\Kaspi\KaspiRefreshPolicy;
 use App\Services\Kaspi\KaspiSingleProductPolicy;
 use Illuminate\Console\Command;
 use Illuminate\Validation\ValidationException;
 
 class KaspiPushProductionCommand extends Command
 {
-    protected $signature = 'kaspi:push-production {--sku=} {--limit=} {--all} {--dry-run} {--debug}';
+    protected $signature = 'kaspi:push-production {--sku=} {--limit=} {--all} {--dry-run} {--debug} {--force-content-refresh} {--approve=}';
 
     protected $description = 'Sequential local Kaspi content enrichment with explicit scope';
 
@@ -28,6 +29,14 @@ class KaspiPushProductionCommand extends Command
         }
         if ($limit !== null && (! ctype_digit((string) $limit) || (int) $limit < 1 || strlen((string) $limit) > 9)) {
             $this->error('invalid_limit');
+
+            return self::FAILURE;
+        }
+        if ($this->option('force-content-refresh')) {
+            return $this->refresh($bridge, $candidates, $guard, $sku, $all ? null : ($sku !== null ? 1 : (int) $limit));
+        }
+        if ($this->option('approve') !== null) {
+            $this->error('approve_requires_force_content_refresh');
 
             return self::FAILURE;
         }
@@ -146,6 +155,139 @@ class KaspiPushProductionCommand extends Command
         $this->line(json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
     }
 
+    private function refresh(KaspiProductionBridgeService $bridge, KaspiProductionCandidateClient $client, KaspiLocalBrowserGuard $guard, ?string $sku, ?int $limit): int
+    {
+        $dry = (bool) $this->option('dry-run');
+        $approve = $this->option('approve');
+        if ((! $dry && (! is_string($approve) || ! preg_match('/^[a-f0-9]{64}$/D', $approve))) || ($dry && $approve !== null)) {
+            $this->error($dry ? 'approve_not_allowed_with_dry_run' : 'force_refresh_requires_approval_hash');
+
+            return self::FAILURE;
+        }
+        $summary = array_fill_keys(['total_candidates', 'with_kaspi_source', 'resolved', 'resolve_failed', 'parsed', 'parse_failed',
+            'ready', 'no_images', 'empty_description', 'empty_attributes', 'attributes_ambiguous', 'skipped',
+            'planned', 'processed', 'updated', 'failed', 'cleanup_warnings'], 0);
+        $ready = [];
+        $failures = [];
+        $seen = [];
+        $cursor = 0;
+        $paginationError = null;
+        try {
+            if ($sku !== null) {
+                KaspiSingleProductPolicy::assertSku($sku);
+            }
+            $guard->assertAllowed();
+            do {
+                $options = ['force_content_refresh' => true, 'limit' => $limit === null ? 100 : min(100, $limit - $summary['total_candidates']), 'cursor' => $cursor];
+                if ($sku !== null) {
+                    $options['sku'] = $sku;
+                }
+                $page = $client->page($options);
+                $next = $page['next_cursor'];
+                if ($next !== null && (! is_int($next) || $next <= $cursor || $page['data'] === [])) {
+                    throw new \RuntimeException('candidate_invalid_cursor');
+                }
+                foreach ($page['data'] as $candidate) {
+                    if (isset($seen['sku:'.$candidate['sku']]) || isset($seen['id:'.$candidate['product_id']])) {
+                        throw new \RuntimeException('candidate_invalid_row');
+                    }
+                    $seen['sku:'.$candidate['sku']] = $seen['id:'.$candidate['product_id']] = true;
+                    $summary['total_candidates']++;
+                    $row = ['id' => $candidate['product_id'], 'product_id' => $candidate['product_id'], 'sku' => $candidate['sku'], 'name' => $candidate['name'],
+                        'storefront_url' => $candidate['storefront_url'], 'kaspi_url' => null,
+                        'current_photo_count' => $candidate['current_photo_count'], 'kaspi_photo_count' => null,
+                        'current_description_present' => $candidate['current_description_present'], 'kaspi_description_present' => null,
+                        'current_attribute_count' => $candidate['current_attribute_count'], 'kaspi_attribute_count' => null,
+                        'photo_action' => 'preserve', 'description_action' => 'preserve', 'attributes_action' => 'preserve',
+                        'status' => 'skipped', 'reason' => null, 'state_fingerprint' => $candidate['state_fingerprint']];
+                    $stage = 'candidate';
+                    try {
+                        // Re-fetch exact production identity immediately before local preparation.
+                        $fresh = $client->fetch(['force_content_refresh' => true, 'sku' => $candidate['sku'], 'limit' => 1]);
+                        if (count($fresh) !== 1 || $fresh[0]['product_id'] !== $candidate['product_id'] || $fresh[0]['storefront_url'] !== $candidate['storefront_url']) {
+                            throw new \RuntimeException('identity_changed', 409);
+                        }
+                        if ($fresh[0]['state_fingerprint'] !== $candidate['state_fingerprint']) {
+                            throw new \RuntimeException('state_changed', 409);
+                        }
+                        $stage = 'resolve';
+                        $prepared = $bridge->prepareRefreshCandidate($fresh[0], (bool) $this->option('debug'), function ($event, $parsed) use (&$summary, &$row, &$stage) {
+                            $summary[$event]++;
+                            if ($event === 'resolved') {
+                                $row['kaspi_url'] = $parsed['url'];
+                                $stage = 'parse';
+                            } elseif ($event === 'parsed') {
+                                $stage = 'validate';
+                                $row['kaspi_photo_count'] = count($parsed['images']);
+                                $row['kaspi_description_present'] = KaspiSingleProductPolicy::description($parsed['description']) !== '';
+                                $row['kaspi_attribute_count'] = count($parsed['attributes']);
+                                if (! $row['kaspi_description_present']) {
+                                    $summary['empty_description']++;
+                                }
+                                if ($row['kaspi_attribute_count'] === 0) {
+                                    $summary['empty_attributes']++;
+                                }
+                            }
+                        });
+                        $row = array_replace($row, ['status' => 'ready', 'photo_action' => 'replace_all',
+                            'description_action' => 'replace', 'attributes_action' => 'replace_content_preserve_system']);
+                        $ready[] = $prepared['payload'];
+                        $summary['ready']++;
+                    } catch (\Throwable $e) {
+                        $reason = $this->reason($e);
+                        $row['reason'] = $reason;
+                        $summary['skipped']++;
+                        if ($stage === 'resolve') {
+                            $summary['resolve_failed']++;
+                        } elseif ($stage === 'parse') {
+                            $summary['parse_failed']++;
+                        }
+                        if (in_array($reason, ['no_images', 'parser_images_missing'], true)) {
+                            $summary['no_images']++;
+                            $row['kaspi_photo_count'] = 0;
+                        }
+                        if ($reason === 'attributes_ambiguous') {
+                            $summary['attributes_ambiguous']++;
+                        }
+                        $failures[] = ['sku' => $candidate['sku'], 'product_id' => $candidate['product_id'], 'status' => 'skipped', 'reason' => $reason];
+                    }
+                    $this->json($row);
+                    if ($limit !== null && $summary['total_candidates'] >= $limit) {
+                        break;
+                    }
+                }
+                $cursor = $next;
+            } while ($cursor !== null && ($limit === null || $summary['total_candidates'] < $limit));
+        } catch (\Throwable $e) {
+            $paginationError = $this->reason($e);
+        }
+        $summary['planned'] = count($ready);
+        $hash = $paginationError === null ? KaspiRefreshPolicy::approval($ready) : null;
+        // Complete-set comparison BEFORE the first POST. Never incrementally approve a batch.
+        if (! $dry && $paginationError === null && ! hash_equals($hash, $approve)) {
+            $paginationError = 'approval_mismatch';
+        }
+        if (! $dry && $paginationError === null) {
+            foreach ($ready as $payload) {
+                $summary['processed']++;
+                try {
+                    $result = $bridge->send($payload);
+                    $summary['updated'] += $result['status'] === 'imported' ? 1 : 0;
+                    $summary['cleanup_warnings'] += count($result['cleanup_warnings']);
+                    $this->json($result);
+                } catch (\Throwable $e) {
+                    $summary['failed']++;
+                    $result = ['sku' => $payload['sku'], 'product_id' => $payload['product_id'], 'status' => 'failed', 'reason' => $this->reason($e)];
+                    $failures[] = $result;
+                    $this->json($result);
+                }
+            }
+        }
+        $this->json(['summary' => $summary, 'approval_hash' => $hash, 'failures' => $failures, 'batch_error' => $paginationError]);
+
+        return $paginationError !== null || $summary['failed'] > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
     private function reason(\Throwable $e): string
     {
         if ($e instanceof ValidationException) {
@@ -161,7 +303,7 @@ class KaspiPushProductionCommand extends Command
             'collector_timeout', 'collector_invalid_json', 'collector_failed', 'collector_empty_or_unavailable', 'collector_html_too_large',
             'parser_empty_or_invalid_html', 'parser_title_missing', 'parser_images_missing', 'invalid_payload',
             'payload_identity_mismatch', 'commercial_attribute_not_allowed', 'image_url_not_allowed', 'node_process_start_failed'];
-        if (in_array($reason, $allowed, true)
+        if (in_array($reason, $allowed, true) || in_array($reason, KaspiRefreshPolicy::REASONS, true)
             || preg_match('/^(?:candidate_http_|get_import_http_|post_import_http_)[1-5][0-9]{2}$/D', $reason)
             || preg_match('/^resolver_not_verified_(?:widget_not_found|widget_mismatch|iframe_not_loaded|timeout|captcha_detected|ambiguous_urls|invalid_kaspi_url|storefront_unavailable|kaspi_url_not_opened|browser_error|local_browser_disabled|malformed_node_output|unknown)$/D', $reason)) {
             return $reason;

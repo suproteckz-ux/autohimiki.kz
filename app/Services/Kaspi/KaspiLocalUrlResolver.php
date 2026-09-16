@@ -37,7 +37,7 @@ class KaspiLocalUrlResolver
             } elseif (! $url) {
                 $status = 'invalid_kaspi_url';
             } else {
-                return array_replace($base, ['kaspi_url' => $url, 'status' => 'resolved', 'diagnostics' => $diagnostics]);
+                return array_replace($base, ['kaspi_url' => $url, 'status' => 'resolved', 'diagnostics' => $diagnostics, 'widget_verified' => true]);
             }
         } else {
             $status = in_array($payload['status'], ['widget_not_found', 'widget_mismatch', 'iframe_not_loaded',
@@ -46,6 +46,6 @@ class KaspiLocalUrlResolver
         }
         $diagnostics['reason'] = $status;
 
-        return $base + ['status' => $status, 'diagnostics' => $diagnostics];
+        return $base + ['status' => $status, 'diagnostics' => $diagnostics, 'widget_verified' => ($payload['widget_verified'] ?? false) === true];
     }
 }

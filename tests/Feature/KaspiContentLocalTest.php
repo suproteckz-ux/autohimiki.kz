@@ -49,6 +49,21 @@ class KaspiContentLocalTest extends TestCase
         }
     }
 
+    public function test_force_collector_uses_same_parser_and_normal_return_shape_is_unchanged(): void
+    {
+        $guard = Mockery::mock(KaspiLocalBrowserGuard::class);
+        $guard->shouldReceive('assertAllowed');
+        $runner = Mockery::mock(KaspiLocalNodeProcessRunner::class);
+        $runner->shouldReceive('collect')->twice()->with(['url' => Policy::URL, 'headless' => 'false'])
+            ->andReturn(['exit_code' => 0, 'stdout' => json_encode(['status' => 'ok', 'captcha' => false, 'html' => $this->html(), 'http_status' => 200, 'final_url' => Policy::URL])]);
+        $collector = new KaspiLocalPageCollector($guard, $runner, new KaspiEnrichmentParser);
+        $normal = $collector->collectUrl(Policy::URL);
+        $force = $collector->collectRefreshUrl(Policy::URL);
+        $this->assertSame([], $force['refresh_attribute_issues']);
+        unset($force['refresh_attribute_issues']);
+        $this->assertSame($normal, $force);
+    }
+
     public function test_collector_rejects_captcha_even_status_ok_and_does_not_print_raw_output(): void
     {
         $guard = Mockery::mock(KaspiLocalBrowserGuard::class);
@@ -58,6 +73,15 @@ class KaspiContentLocalTest extends TestCase
         $collector = new KaspiLocalPageCollector($guard, $runner, new KaspiEnrichmentParser);
         $this->expectExceptionMessage('captcha_detected');
         $collector->collectUrl(Policy::URL);
+    }
+
+    public function test_force_parser_does_not_silently_discard_malformed_backend_characteristics(): void
+    {
+        $html = str_replace('"0.65 \\u043b"', 'null', $this->html());
+        // The old parser keeps its tolerant normal behavior; force refuses incomplete extraction.
+        $this->assertSame([], app(KaspiEnrichmentParser::class)->parse($html, Policy::URL)['attributes']);
+        $this->expectExceptionMessage('attributes_invalid');
+        app(KaspiEnrichmentParser::class)->parse($html, Policy::URL, true);
     }
 
     public function test_collector_guard_prevents_node(): void
