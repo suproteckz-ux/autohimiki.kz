@@ -7,12 +7,10 @@
 @section('content')
 @php
     $wa = \App\Services\CacheService::setting('whatsapp', '');
-    $heroProducts = $hits->filter(fn ($product) => !empty($product->main_image))->take(5)->values();
-    $heroCount = $heroProducts->count();
 @endphp
 <div class="ah-home">
 <section class="ah-hero">
-    <div class="ah-container ah-hero-grid {{ $heroCount ? '' : 'ah-hero-grid--no-products' }}">
+    <div class="ah-container ah-hero-grid">
         <div class="ah-hero-copy">
             <p class="ah-eyebrow">Алматы · Автохимия · Детейлинг</p>
             <h1>Автохимия<br><span>для вашего авто</span></h1>
@@ -22,25 +20,14 @@
             </div>
             <div class="ah-stats">@foreach([['800+', 'товаров'], ['30+', 'брендов'], ['5 лет', 'на рынке']] as [$value, $label])<div><strong>{{ $value }}</strong><span>{{ $label }}</span></div>@endforeach</div>
         </div>
-        <div class="ah-hero-visual" data-product-count="{{ $heroCount }}">
-            @forelse($heroProducts as $product)
-                <a class="ah-hero-product ah-hero-product--{{ $loop->iteration }}" href="{{ route('product.show', $product->slug) }}" aria-label="{{ $product->name }}">
-                    <picture>
-                        @if(!empty($product->main_image_webp))<source srcset="{{ asset('storage/' . $product->main_image_webp) }}" type="image/webp">@endif
-                        <img src="{{ asset('storage/' . $product->main_image) }}"
-                             alt="{{ $product->main_image_alt ?? $product->name }}"
-                             width="320" height="420"
-                             loading="{{ $loop->first ? 'eager' : 'lazy' }}" decoding="async"
-                             @if($loop->first) fetchpriority="high" @endif>
-                    </picture>
-                    <span>{{ $product->brand?->name ?: \Illuminate\Support\Str::limit($product->name, 18) }}</span>
-                </a>
-            @empty
-                <div class="ah-hero-empty"><x-ui.brand-mark /><strong>Профессиональный уход</strong><span>для вашего автомобиля</span></div>
-            @endforelse
-            @if($heroCount)
-                <p class="ah-hero-visual-note">Реальные товары из нашего каталога</p>
-            @endif
+        <div class="ah-hero-visual">
+            <picture class="ah-hero-media">
+                <source media="(max-width: 768px)" srcset="{{ asset('images/hero/autohimiki-hero-mobile.webp') }}" type="image/webp">
+                <img src="{{ asset('images/hero/autohimiki-hero.webp') }}"
+                     alt="Автохимия и средства для профессионального ухода за автомобилем"
+                     width="1031" height="580"
+                     loading="eager" decoding="async" fetchpriority="high">
+            </picture>
         </div>
     </div>
 </section>
