@@ -34,6 +34,8 @@ class KaspiForceRefreshCommandTest extends TestCase
 
     private string $lastOutput = '';
 
+    private bool $exactOnly = false;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -68,6 +70,9 @@ class KaspiForceRefreshCommandTest extends TestCase
         Http::fake(function ($request) {
             $this->assertTrue($request->hasHeader('Authorization', 'Bearer never-print-secret'));
             if (str_contains($request->url(), '/candidates')) {
+                if ($this->exactOnly) {
+                    $this->assertNotEmpty($request['sku'], 'SKU-file must never request a full candidate scan');
+                }
                 $this->assertSame('true', $request['force_content_refresh']);
                 $query = $request->data();
                 $rows = array_values(array_filter($this->rows, fn ($row) => (! isset($query['sku']) || $query['sku'] === $row['sku']) && $row['product_id'] > (int) $request['cursor']));
@@ -108,6 +113,123 @@ class KaspiForceRefreshCommandTest extends TestCase
         $lines = array_values(array_filter(explode("\n", trim($output))));
 
         return json_decode(end($lines), true, flags: JSON_THROW_ON_ERROR);
+    }
+
+    private function runFile(string $contents, array $options = [], int $exit = 0): array
+    {
+        $file = tmpfile();
+        fwrite($file, $contents);
+        $path = stream_get_meta_data($file)['uri'];
+        $this->exactOnly = true;
+        try {
+            $actual = Artisan::call('kaspi:push-production', $options + ['--sku-file' => $path, '--force-content-refresh' => true]);
+            $this->lastOutput = Artisan::output();
+            $this->assertSame($exit, $actual, $this->lastOutput);
+
+            return array_map(fn ($line) => json_decode($line, true, flags: JSON_THROW_ON_ERROR),
+                explode("\n", trim($this->lastOutput)));
+        } finally {
+            fclose($file);
+        }
+    }
+
+    public function test_file_scope_reads_bom_blank_lines_deduplicates_and_never_scans_other_products(): void
+    {
+        $this->add(2);
+        $this->add(3);
+        $rows = $this->runFile("\xEF\xBB\xBFsku-2\r\n\nsku-1\nsku-2\nmissing\n", ['--execute' => true]);
+        $this->assertSame(['sku_file_count' => 3, 'found' => 2, 'missing' => 1], $rows[0]);
+        $this->assertSame(['sku' => 'missing', 'status' => 'skipped', 'reason' => 'product_not_found'], $rows[3]);
+        $this->assertSame(['total_requested' => 3, 'resolved' => 2, 'ready' => 2, 'skipped' => 1,
+            'processed' => 2, 'updated' => 2, 'failed' => 0, 'empty_description' => 0], end($rows)['summary']);
+        $this->assertSame(['resolve:sku-2', 'parse:sku-2', 'post:sku-2', 'resolve:sku-1', 'parse:sku-1', 'post:sku-1'], $this->events);
+        Http::assertNotSent(fn ($r) => ! in_array($r['sku'], ['sku-1', 'sku-2', 'missing'], true));
+        Http::assertSent(fn ($r) => $r->method() === 'POST' && $r['force_content_refresh'] === true
+            && isset($r['product_id'], $r['state_fingerprint']));
+    }
+
+    public function test_file_scope_imports_empty_description_skips_unverified_widget_then_continues(): void
+    {
+        $this->add(2);
+        $this->add(3);
+        $this->parsed['sku-1']['description'] = '<script>empty()</script>';
+        $this->resolveErrors['sku-2'] = 'widget_not_found';
+        $rows = $this->runFile("sku-1\nsku-2\nsku-3", ['--execute' => true]);
+        $this->assertSame('imported', $rows[1]['status']);
+        $this->assertSame('resolver_not_verified_widget_not_found', $rows[2]['reason']);
+        $this->assertSame(['total_requested' => 3, 'resolved' => 2, 'ready' => 2, 'skipped' => 1,
+            'processed' => 2, 'updated' => 2, 'failed' => 0, 'empty_description' => 1], end($rows)['summary']);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST' && $r['sku'] === 'sku-2');
+        Http::assertSent(fn ($r) => $r->method() === 'POST' && $r['sku'] === 'sku-1'
+            && $r['allow_empty_description'] === true && $r['content']['description'] === '');
+    }
+
+    public function test_file_force_dry_run_still_skips_empty_description(): void
+    {
+        $this->parsed['sku-1']['description'] = '';
+        $rows = $this->runFile('sku-1', ['--dry-run' => true]);
+        $this->assertSame('empty_description', $rows[1]['reason']);
+        $this->assertSame(0, end($rows)['summary']['ready']);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+    }
+
+    public function test_file_scope_without_execute_has_no_network_or_import_and_dry_run_has_no_posts(): void
+    {
+        $this->assertSame(1, Artisan::call('kaspi:push-production', ['--sku-file' => 'unused', '--force-content-refresh' => true]));
+        Http::assertNothingSent();
+        $rows = $this->runFile('sku-1', ['--dry-run' => true]);
+        $this->assertSame(1, end($rows)['summary']['ready']);
+        $this->assertSame(0, end($rows)['summary']['processed']);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+    }
+
+    public function test_file_scope_invalid_or_conflicting_options_fail_before_network(): void
+    {
+        foreach ([['--all' => true], ['--sku' => 'sku-1'], ['--limit' => 1], ['--approve' => str_repeat('a', 64)], ['--dry-run' => true]] as $conflict) {
+            $this->assertSame(1, Artisan::call('kaspi:push-production', $conflict + ['--sku-file' => 'unused', '--execute' => true]));
+        }
+        $this->assertSame(1, Artisan::call('kaspi:push-production', ['--sku' => 'sku-1', '--execute' => true]));
+        $rows = $this->runFile("\n\r\n", ['--execute' => true], 1);
+        $this->assertSame('sku_file_empty', end($rows)['batch_error']);
+        $rows = $this->runFile("sku-1\ninvalid\tsku\n", ['--execute' => true], 1);
+        $this->assertSame('invalid_exact_sku', end($rows)['batch_error']);
+        Http::assertNothingSent();
+    }
+
+    public function test_file_scope_preserves_numeric_sku_leading_zeroes_and_rejects_invalid_utf8(): void
+    {
+        $rows = $this->runFile("sku-1\n\xFF\n", ['--execute' => true], 1);
+        $this->assertSame('sku_file_invalid_utf8', end($rows)['batch_error']);
+        Http::assertNothingSent();
+        $rows = $this->runFile("00000000680\nРТ-00001286", ['--execute' => true]);
+        $this->assertSame(['sku_file_count' => 2, 'found' => 0, 'missing' => 2], $rows[0]);
+        $this->assertSame('00000000680', $rows[1]['sku']);
+        $this->assertSame('РТ-00001286', $rows[2]['sku']);
+        $this->assertSame([], $this->events);
+        Http::assertSent(fn ($r) => $r['sku'] === '00000000680');
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+    }
+
+    public function test_file_scope_import_failure_is_counted_and_later_sku_still_runs(): void
+    {
+        $this->add(2);
+        $this->postErrors['sku-1'] = 'state_changed';
+        $rows = $this->runFile("sku-1\nsku-2", ['--execute' => true], 1);
+        $this->assertSame('failed', $rows[1]['status']);
+        $this->assertSame(2, end($rows)['summary']['processed']);
+        $this->assertSame(1, end($rows)['summary']['updated']);
+        $this->assertSame(1, end($rows)['summary']['failed']);
+    }
+
+    public function test_file_scope_paces_preflight_for_133_exact_lookups(): void
+    {
+        $skus = array_map(fn ($id) => 'missing-'.$id, range(1, 133));
+        $rows = $this->runFile(implode("\n", $skus), ['--execute' => true]);
+        $this->assertSame(['sku_file_count' => 133, 'found' => 0, 'missing' => 133], $rows[0]);
+        $this->assertSame(133, end($rows)['summary']['skipped']);
+        Sleep::assertSleptTimes(132);
+        Http::assertSentCount(133);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
     }
 
     public function test_dry_run_exact_fields_counters_no_posts_and_deterministic_approval(): void

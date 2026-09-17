@@ -9,13 +9,14 @@ use App\Services\Kaspi\KaspiRefreshManifest;
 use App\Services\Kaspi\KaspiRefreshPolicy;
 use App\Services\Kaspi\KaspiSingleProductPolicy;
 use Illuminate\Console\Command;
+use Illuminate\Support\Sleep;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\StreamOutput;
 
 class KaspiPushProductionCommand extends Command
 {
-    protected $signature = 'kaspi:push-production {--sku=} {--limit=} {--all} {--dry-run} {--debug} {--force-content-refresh} {--approve=} {--diagnostics}';
+    protected $signature = 'kaspi:push-production {--sku=} {--sku-file=} {--limit=} {--all} {--dry-run} {--execute} {--debug} {--force-content-refresh} {--approve=} {--diagnostics}';
 
     protected $description = 'Sequential local Kaspi content enrichment with explicit scope';
 
@@ -24,6 +25,26 @@ class KaspiPushProductionCommand extends Command
         $sku = $this->option('sku');
         $limit = $this->option('limit');
         $all = (bool) $this->option('all');
+        if ($this->option('sku-file') !== null) {
+            if ($sku !== null || $limit !== null || $all || $this->option('approve') !== null
+                || ($this->option('execute') && $this->option('dry-run'))) {
+                $this->error('invalid_sku_file_options');
+
+                return self::FAILURE;
+            }
+            if (! $this->option('execute') && ! $this->option('dry-run')) {
+                $this->error('sku_file_requires_execute_or_dry_run');
+
+                return self::FAILURE;
+            }
+
+            return $this->skuFile($bridge, $candidates, $guard);
+        }
+        if ($this->option('execute')) {
+            $this->error('execute_requires_sku_file');
+
+            return self::FAILURE;
+        }
         if (($sku === null && $limit === null && ! $all)
             || ($all && ($sku !== null || $limit !== null)) || ($sku !== null && $limit !== null)) {
             $this->error('select_exactly_one_mode_sku_limit_all');
@@ -65,6 +86,112 @@ class KaspiPushProductionCommand extends Command
 
             return self::FAILURE;
         }
+    }
+
+    private function skuFile(KaspiProductionBridgeService $bridge, KaspiProductionCandidateClient $client, KaspiLocalBrowserGuard $guard): int
+    {
+        $summary = array_fill_keys(['total_requested', 'resolved', 'ready', 'skipped', 'processed', 'updated', 'failed', 'empty_description'], 0);
+        $force = (bool) $this->option('force-content-refresh');
+        $execute = (bool) $this->option('execute');
+        $batchError = null;
+        try {
+            $guard->assertAllowed();
+            $path = realpath((string) $this->option('sku-file'));
+            if ($path === false || ! is_file($path) || ! is_readable($path)) {
+                throw new \RuntimeException('sku_file_unreadable');
+            }
+            $skus = [];
+            $file = new \SplFileObject($path, 'r');
+            foreach ($file as $number => $line) {
+                if ($number === 0) {
+                    $line = preg_replace('/^\xEF\xBB\xBF/', '', $line);
+                }
+                $sku = trim($line);
+                if ($sku === '') {
+                    continue;
+                }
+                if (! mb_check_encoding($sku, 'UTF-8')) {
+                    throw new \RuntimeException('sku_file_invalid_utf8');
+                }
+                KaspiSingleProductPolicy::assertSku($sku);
+                $skus['sku:'.$sku] = $sku; // Deduplicate without converting numeric SKUs.
+            }
+            unset($file);
+            if ($skus === []) {
+                throw new \RuntimeException('sku_file_empty');
+            }
+            $summary['total_requested'] = count($skus);
+            $found = [];
+            $lastLookupAt = null;
+            $fetch = function (string $sku) use ($client, $force, &$lastLookupAt) {
+                // Candidate API allows 60/minute; preflight can otherwise burst all 133 requests.
+                if ($lastLookupAt !== null) {
+                    $delay = (int) ceil(max(0, 1.1 - (microtime(true) - $lastLookupAt)) * 1000);
+                    if ($delay > 0) {
+                        Sleep::for($delay)->milliseconds();
+                    }
+                }
+                $lastLookupAt = microtime(true);
+
+                return $client->fetch(['sku' => $sku, 'limit' => 1, 'force_content_refresh' => $force]);
+            };
+            foreach ($skus as $key => $sku) {
+                $rows = $fetch($sku);
+                $found[$key] = count($rows) === 1;
+            }
+            $foundCount = count(array_filter($found));
+            $this->json(['sku_file_count' => count($skus), 'found' => $foundCount, 'missing' => count($skus) - $foundCount]);
+            foreach ($skus as $key => $sku) {
+                if (! $found[$key]) {
+                    $summary['skipped']++;
+                    $this->json(['sku' => $sku, 'status' => 'skipped', 'reason' => 'product_not_found']);
+
+                    continue;
+                }
+                $stage = 'prepare';
+                try {
+                    // Refresh exact identity/state after preflight, never scan the catalogue.
+                    $rows = $fetch($sku);
+                    if (count($rows) !== 1) {
+                        throw new \RuntimeException('product_not_found');
+                    }
+                    if ($force) {
+                        $prepared = $bridge->prepareRefreshCandidate($rows[0], (bool) $this->option('debug'), function ($event) use (&$summary) {
+                            if ($event === 'resolved') {
+                                $summary['resolved']++;
+                            }
+                        }, $execute);
+                    } else {
+                        $prepared = $bridge->prepareCandidate($rows[0], (bool) $this->option('debug'), function () use (&$summary) {
+                            $summary['resolved']++;
+                        });
+                    }
+                    $summary['empty_description'] += $force && $prepared['payload']['content']['description'] === '' ? 1 : 0;
+                    $summary['ready']++;
+                    if ($execute) {
+                        $stage = 'import';
+                        $summary['processed']++;
+                        $result = $bridge->send($prepared['payload']);
+                        $summary['updated'] += $result['status'] === 'imported' ? 1 : 0;
+                        $this->json($result);
+                    } else {
+                        $this->json(['sku' => $sku, 'status' => 'ready', 'preview' => $prepared['preview']]);
+                    }
+                } catch (\Throwable $e) {
+                    $reason = $this->reason($e);
+                    $summary[$stage === 'import' ? 'failed' : 'skipped']++;
+                    $summary['empty_description'] += $reason === 'empty_description' ? 1 : 0;
+                    $this->json(['sku' => $sku, 'status' => $stage === 'import' ? 'failed' : 'skipped', 'reason' => $reason]);
+                } finally {
+                    unset($prepared, $rows);
+                }
+            }
+        } catch (\Throwable $e) {
+            $batchError = $this->reason($e);
+        }
+        $this->json(['summary' => $summary, 'batch_error' => $batchError]);
+
+        return $batchError !== null || $summary['failed'] > 0 ? self::FAILURE : self::SUCCESS;
     }
 
     private function batch(KaspiProductionBridgeService $bridge, KaspiProductionCandidateClient $candidates, KaspiLocalBrowserGuard $guard, ?int $limit): int
@@ -339,7 +466,8 @@ class KaspiPushProductionCommand extends Command
             return 'invalid_payload';
         }
         $reason = explode(':', $e->getMessage(), 2)[0];
-        $allowed = ['manifest_create_failed', 'manifest_write_failed', 'manifest_read_failed', 'manifest_invalid_order', 'manifest_not_sealed',
+        $allowed = ['sku_file_unreadable', 'sku_file_invalid_utf8', 'sku_file_empty', 'product_not_found',
+            'manifest_create_failed', 'manifest_write_failed', 'manifest_read_failed', 'manifest_invalid_order', 'manifest_not_sealed',
             'invalid_exact_sku', 'local_browser_disabled', 'production_base_mismatch', 'widget_configuration_missing',
             'candidate_identity_mismatch', 'resolver_not_verified', 'invalid_preview_response',
             'invalid_import_response_check_before_retry', 'internal_api_token_missing', 'kaspi_internal_api_token_missing',

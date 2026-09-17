@@ -13,9 +13,10 @@ class KaspiProductionBridgeService
 
     private ?float $lastRequestAt = null;
 
-    public function prepareRefreshCandidate(array $candidate, bool $debug, callable $progress): array
+    public function prepareRefreshCandidate(array $candidate, bool $debug, callable $progress, bool $allowEmptyDescription = false): array
     {
         $candidate['_force'] = true;
+        $candidate['_allow_empty_description'] = $allowEmptyDescription;
         $candidate['_progress'] = $progress;
 
         return $this->prepareCandidate($candidate, $debug);
@@ -84,6 +85,9 @@ class KaspiProductionBridgeService
             }
         }
         $extra = $force ? ['force_content_refresh' => true, 'product_id' => $candidate['product_id'], 'state_fingerprint' => $candidate['state_fingerprint']] : [];
+        if ($force && ($candidate['_allow_empty_description'] ?? false) === true) {
+            $extra['allow_empty_description'] = true;
+        }
         $payload = $this->validator->validate($extra + ['version' => 1, 'sku' => $sku, 'storefront_url' => $candidate['storefront_url'],
             'kaspi_url' => $parsed['url'], 'content' => ['title' => $parsed['title'], 'description' => $parsed['description'], 'images' => $parsed['images'], 'attributes' => $parsed['attributes']],
             'source' => ['collector' => 'local-playwright', 'resolver_verified' => true, 'captcha' => false,

@@ -164,6 +164,52 @@ class KaspiForceRefreshApiTest extends TestCase
         return [['РТ-00001286'], ['РТ-00000960'], ['РТ-00001093']];
     }
 
+    public function test_explicit_file_execution_clears_description_updates_media_attributes_and_preserves_protected_data(): void
+    {
+        $before = $this->snapshot();
+        $productBefore = (array) DB::table('products')->first();
+        $payload = $this->payload();
+        $payload['allow_empty_description'] = true;
+        $payload['content']['description'] = '<script>empty()</script>';
+        $this->postJson(self::API, $payload)->assertOk()->assertJsonPath('status', 'imported');
+        $product = (array) DB::table('products')->first();
+        $this->assertSame('', $product['description']);
+        $this->assertSame(['Цвет' => 'New'], json_decode($product['attributes'], true));
+        $this->assertStringContainsString(hash('sha256', $this->image(1)), $product['main_image']);
+        $this->assertNull($product['main_image_webp']);
+        $gallery = DB::table('product_images')->orderBy('sort_order')->get();
+        $this->assertCount(2, $gallery);
+        $this->assertStringContainsString(hash('sha256', $this->image(2)), $gallery[0]->path);
+        $this->assertStringContainsString(hash('sha256', $this->image(3)), $gallery[1]->path);
+        foreach ($productBefore as $key => $value) {
+            if (! in_array($key, ['description', 'attributes', 'main_image', 'main_image_webp'], true)) {
+                $this->assertSame($value, $product[$key], $key);
+            }
+        }
+        foreach ($before[0] as $table => $value) {
+            if (! in_array($table, ['products', 'product_images'], true)) {
+                $this->assertSame($value, DB::table($table)->get()->toJson(), $table);
+            }
+        }
+    }
+
+    public static function invalidEmptyDescriptionOptIns(): array
+    {
+        return [[true, 'true'], [true, 1], [true, null], [false, true]];
+    }
+
+    #[DataProvider('invalidEmptyDescriptionOptIns')]
+    public function test_empty_description_opt_in_requires_force_and_strict_boolean(bool $force, mixed $flag): void
+    {
+        $payload = $this->payload();
+        $payload['force_content_refresh'] = $force;
+        $payload['allow_empty_description'] = $flag;
+        $before = $this->snapshot();
+        $this->postJson(self::API, $payload)->assertUnprocessable()->assertJsonPath('error', 'invalid_payload');
+        $this->assertSame($before, $this->snapshot());
+        Http::assertNothingSent();
+    }
+
     #[DataProvider('requestedSkus')]
     public function test_ordinary_unfamiliar_characteristics_replace_entire_object(string $sku): void
     {

@@ -10,6 +10,10 @@ class KaspiProductionPayloadValidator
     {
         KaspiSingleProductPolicy::assertSku($payload['sku'] ?? null);
         $force = KaspiRefreshPolicy::force($payload);
+        if (array_key_exists('allow_empty_description', $payload)
+            && (! $force || ! is_bool($payload['allow_empty_description']))) {
+            throw new \RuntimeException('invalid_payload', 422);
+        }
         if ($force) {
             $bytes = max($bytes, strlen(json_encode($payload, JSON_THROW_ON_ERROR)));
             if ($bytes > 131072) {
@@ -29,13 +33,14 @@ class KaspiProductionPayloadValidator
         }
         $allowed = ['version', 'sku', 'storefront_url', 'kaspi_url', 'source', 'content', 'force_content_refresh'];
         if ($force) {
-            $allowed = [...$allowed, 'product_id', 'state_fingerprint'];
+            $allowed = [...$allowed, 'product_id', 'state_fingerprint', 'allow_empty_description'];
         }
         if ($bytes > 131072 || array_diff(array_keys($payload), $allowed)) {
             throw new \RuntimeException('invalid_payload', 422);
         }
         $extra = $force ? ['product_id' => ['required', 'integer', 'min:1'], 'state_fingerprint' => ['required', 'regex:/^[a-f0-9]{64}$/D']] : [];
         $data = Validator::make($payload, $extra + [
+            'allow_empty_description' => ['sometimes', 'boolean'],
             'force_content_refresh' => ['sometimes', 'boolean'],
             'version' => ['required', 'integer', 'in:1'],
             'sku' => ['required', 'string'],
@@ -97,7 +102,7 @@ class KaspiProductionPayloadValidator
         $data['content']['attributes'] = $attributes;
         $data['content']['description'] = KaspiSingleProductPolicy::description($data['content']['description']);
         if ($force) {
-            if ($data['content']['description'] === '') {
+            if ($data['content']['description'] === '' && ($data['allow_empty_description'] ?? false) !== true) {
                 throw new \RuntimeException('empty_description', 422);
             }
             KaspiRefreshPolicy::incoming($attributes);

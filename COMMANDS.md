@@ -1,5 +1,50 @@
 # Команды для autohimiki.kz на hoster.kz (Plesk + CloudLinux)
 
+## Kaspi: локальный проход по файлу SKU
+
+`--sku-file` — отдельный scope, несовместимый с `--sku`, `--limit`, `--all` и `--approve`.
+Файл UTF-8: один точный SKU на строку; BOM, пустые строки и краевые пробелы допустимы.
+Повторы удаляются с сохранением первого порядка; ведущие нули SKU сохраняются.
+Файл проверяется целиком до сети. Содержимое файла не является инструкциями или URL.
+
+```powershell
+php artisan kaspi:push-production --sku-file="C:\Users\anton\Downloads\kaspi_widget_skus_133.txt" --force-content-refresh --execute
+```
+
+Для записи обязателен `--execute`. Без него команда завершается до сетевых запросов,
+если явно не задан read-only `--dry-run`; `--execute --dry-run` запрещено.
+Approval hash для этого scope не нужен. Прежние force scopes сохраняют approval.
+
+Перед resolver/import выполняются только точечные GET candidates по SKU из файла:
+stdout выводит `sku_file_count`, `found`, `missing` (число уникальных непустых SKU).
+Полной выборки каталога нет. Missing означает, что exact candidate API не вернул
+доступный товар (включая неактивный/неподходящий товар); причина `product_not_found`.
+Перед точечными GET соблюдается интервал не менее 1,1 секунды (API: 60/min);
+предварительная проверка 133 SKU занимает минимум около 2,4 минуты.
+Перед обработкой найденный SKU повторно запрашивается для свежего fingerprint.
+Проверка существующего widget/resolver обязательна даже для заранее проверенного списка.
+Только для `--sku-file --force-content-refresh --execute` пустое описание после
+sanitization очищает существующий description и не блокирует импорт фото/характеристик.
+`empty_description` учитывается в summary. Команда передаёт явный boolean
+`allow_empty_description=true`; локальный и серверный validator должны поддерживать
+этот флаг. Он разрешён только вместе с force и не включается для других scopes
+или dry-run: там прежнее правило `empty_description` сохраняется.
+Неподтверждённый widget/resolver и отсутствующие товары пропускаются,
+остальные SKU продолжаются. Требования к фото/характеристикам не меняются.
+
+Force использует существующий pipeline и серверный import: photos replace_all,
+description replace, attributes replace_all. Остальные поля и интеграции не меняются.
+Тяжёлый payload хранится только для текущего товара; approval manifest не создаётся.
+Summary: `total_requested`, `resolved`, `ready`, `skipped`, `processed` (POST attempts),
+`updated`, `failed` (POST failures), `empty_description`. Пропуски дают exit 0;
+ошибка preflight или POST даёт exit 1. Ошибка preflight предотвращает все POST.
+
+Без записи:
+
+```powershell
+php artisan kaspi:push-production --sku-file="C:\Users\anton\Downloads\kaspi_widget_skus_133.txt" --force-content-refresh --dry-run
+```
+
 ## Kaspi: одноразовое полное обновление контента — только локальный Windows
 
 Это отдельный одноразовый режим существующего `kaspi:push-production`, а не новая
