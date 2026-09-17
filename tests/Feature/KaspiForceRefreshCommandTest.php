@@ -5,12 +5,15 @@ namespace Tests\Feature;
 use App\Services\Kaspi\KaspiLocalBrowserGuard;
 use App\Services\Kaspi\KaspiLocalPageCollector;
 use App\Services\Kaspi\KaspiLocalUrlResolver;
+use App\Services\Kaspi\KaspiRefreshManifest;
 use App\Services\Kaspi\KaspiRefreshPolicy;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Symfony\Component\Console\Output\BufferedOutput;
+use Symfony\Component\Console\Output\ConsoleOutput;
 use Tests\TestCase;
 
 class KaspiForceRefreshCommandTest extends TestCase
@@ -128,6 +131,91 @@ class KaspiForceRefreshCommandTest extends TestCase
         Http::assertNotSent(fn ($r) => $r->method() === 'POST');
     }
 
+    public function test_finalization_and_diagnostics_use_stderr_and_manifest_is_cleaned(): void
+    {
+        $manifest = new KaspiRefreshManifest;
+        $stream = (new \ReflectionProperty($manifest, 'stream'))->getValue($manifest);
+        $path = stream_get_meta_data($stream)['uri'];
+        $this->app->instance(KaspiRefreshManifest::class, $manifest);
+        $stdout = new BufferedOutput;
+        $stderr = new BufferedOutput;
+        $output = new class($stdout) extends ConsoleOutput
+        {
+            public function __construct(private BufferedOutput $buffer)
+            {
+                parent::__construct();
+            }
+
+            protected function doWrite(string $message, bool $newline): void
+            {
+                $this->buffer->write($message, $newline);
+            }
+        };
+        $output->setErrorOutput($stderr);
+        $this->assertSame(0, Artisan::call('kaspi:push-production', [
+            '--limit' => 1, '--force-content-refresh' => true, '--dry-run' => true, '--diagnostics' => true,
+        ], $output));
+        $lines = explode("\n", trim($stdout->fetch()));
+        foreach ($lines as $line) {
+            $this->assertIsArray(json_decode($line, true, flags: JSON_THROW_ON_ERROR));
+        }
+        $summary = json_decode(end($lines), true);
+        $this->assertSame(1, $summary['summary']['ready']);
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $summary['approval_hash']);
+        $progress = $stderr->fetch();
+        $this->assertStringContainsString('[finalizing] ready=1', $progress);
+        $this->assertStringContainsString('[finalizing] canonical manifest complete', $progress);
+        $this->assertStringContainsString('[finalizing] approval hash calculated', $progress);
+        $this->assertMatchesRegularExpression('/memory_bytes=\d+ peak_bytes=\d+ ready=1 manifest_bytes=\d+/', $progress);
+        $this->assertStringNotContainsString('never-print-secret', $progress);
+        $this->assertStringNotContainsString('Fresh', $progress);
+        $this->assertFileDoesNotExist($path);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+    }
+
+    public static function manifestFailures(): array
+    {
+        return [['write'], ['read'], ['mismatch']];
+    }
+
+    #[DataProvider('manifestFailures')]
+    public function test_spool_failure_or_mismatch_prints_summary_cleans_temp_and_blocks_posts(string $failure): void
+    {
+        $manifest = new class($failure) extends KaspiRefreshManifest
+        {
+            public function __construct(private string $failure)
+            {
+                parent::__construct();
+            }
+
+            public function append(array $payload): void
+            {
+                parent::append($payload);
+                if ($this->failure === 'write') {
+                    throw new \RuntimeException('manifest_write_failed');
+                }
+            }
+
+            public function approval(): string
+            {
+                if ($this->failure === 'read') {
+                    throw new \RuntimeException('manifest_read_failed');
+                }
+
+                return parent::approval();
+            }
+        };
+        $stream = (new \ReflectionProperty(KaspiRefreshManifest::class, 'stream'))->getValue($manifest);
+        $path = stream_get_meta_data($stream)['uri'];
+        $this->app->instance(KaspiRefreshManifest::class, $manifest);
+        $result = $this->runForce(['--approve' => str_repeat('0', 64)], 1);
+        $expected = $failure === 'mismatch' ? 'approval_mismatch' : 'manifest_'.$failure.'_failed';
+        $this->assertSame($expected, $result['batch_error']);
+        $this->assertSame(0, $result['summary']['processed']);
+        $this->assertFileDoesNotExist($path);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+    }
+
     public function test_all_plans_verified_before_posts_and_one_failure_does_not_stop_next_product(): void
     {
         $this->add(2);
@@ -140,6 +228,30 @@ class KaspiForceRefreshCommandTest extends TestCase
         $this->assertSame(1, $result['summary']['updated']);
         $this->assertSame(1, $result['summary']['failed']);
         $this->assertSame(['sku' => 'sku-1', 'product_id' => 1, 'status' => 'failed', 'reason' => 'state_changed'], $result['failures'][0]);
+    }
+
+    public function test_paginated_ready_set_finishes_with_summary_and_no_posts(): void
+    {
+        foreach (range(2, 205) as $id) {
+            $this->add($id);
+        }
+        $result = $this->runForce(['--dry-run' => true]);
+        $this->assertSame(205, $result['summary']['total_candidates']);
+        $this->assertSame(205, $result['summary']['ready']);
+        $this->assertSame(205, $result['summary']['planned']);
+        $this->assertNull($result['batch_error']);
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $result['approval_hash']);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+    }
+
+    public function test_unordered_candidate_page_aborts_without_approval_or_posts(): void
+    {
+        $this->add(2);
+        $this->rows = array_reverse($this->rows, true);
+        $result = $this->runForce(['--dry-run' => true], 1);
+        $this->assertSame('candidate_invalid_row', $result['batch_error']);
+        $this->assertNull($result['approval_hash']);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
     }
 
     public static function drift(): array

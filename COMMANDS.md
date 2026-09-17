@@ -65,7 +65,33 @@ Dry-run и выполнение сначала собирают **весь** rea
 политики и канонический JSON payload каждого товара в порядке product ID, включая
 ID, точный SKU, storefront URL, fingerprint, разрешённый Kaspi URL, порядок image URL,
 санитизированное описание, нормализованные характеристики и source identity.
-Manifest хранится в памяти; локальный файл с секретами или payload не создаётся.
+Формат approval остаётся `policy=1`, hash побайтно совместим с прежним алгоритмом.
+READY payload записывается по одному в локальный временный NDJSON через `tmpfile()`
+после Windows/local guard. Файл содержит контент, но не bearer token; путь и контент
+не выводятся в diagnostics. Временный файл удаляется при закрытии в `finally`
+после успеха или перехваченной ошибки; destructor также закрывает ресурс.
+При аварийном завершении ОС/PHP автоматическое удаление не гарантируется.
+
+API уже выдаёт кандидатов по возрастанию product ID; локальный force-проход проверяет
+этот порядок. Нарушение порядка/ошибка файла прерывает batch без approval и POST.
+Каждая строка — канонический JSON всего валидированного payload: identity, fingerprint,
+content (включая title), source, version и force-флаг. Эти поля уже были связаны hash,
+поэтому не удаляются. Preview, counts, действия, HTML и debug не сохраняются в manifest.
+SHA-256 читает строки последовательно с прежним JSON framing, без сортировки/сборки
+всего набора в RAM. Execution после проверки полного hash читает payload по одному.
+
+После последнего товара stderr сообщает `[finalizing] ready=N`,
+`[finalizing] canonical manifest complete`, `[finalizing] approval hash calculated`.
+JSON stdout остаётся отдельным. Для force dry-run `--diagnostics` добавляет в stderr
+memory_bytes, peak_bytes, ready и manifest_bytes после каждого товара и при завершении:
+
+```powershell
+php artisan kaspi:push-production --limit=10 --force-content-refresh --dry-run --diagnostics
+```
+
+Память тяжёлого контента ограничена текущим товаром/строкой; размер temp-файла растёт
+с READY-набором. Небольшие SKU-dedup и failure metadata по-прежнему растут с batch;
+текущая страница содержит не более 100 кандидатов. Нужен доступный локальный temp-диск.
 
 Перед первым POST выполнение заново разрешает/парсит весь scope и сравнивает hash.
 Любой дрейф ready-набора, контента или состояния блокирует **все** POST этого запуска.
@@ -135,7 +161,7 @@ Execution добавляет `planned`, `processed` (POST attempts), `updated`, 
 `KASPI_LOCAL_BROWSER_ENABLED=true`, локальный Playwright, production HTTPS/token,
 совпадающие merchant/city и writable public storage на сервере. Перед выполнением
 проверить backup и отсутствие конкурирующих редакторов контента. Готовый набор
-хранится в памяти; для большого каталога использовать ограниченный scope.
+хранится в локальном временном файле; для контролируемой проверки использовать ограниченный scope.
 GET может создавать обычные HTTP/session/throttle logs/cache; dry-run не меняет
 товары, media rows/files и не инвалидирует storefront caches.
 
