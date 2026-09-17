@@ -5,14 +5,18 @@ namespace App\Console\Commands;
 use App\Services\Kaspi\KaspiLocalBrowserGuard;
 use App\Services\Kaspi\KaspiProductionBridgeService;
 use App\Services\Kaspi\KaspiProductionCandidateClient;
+use App\Services\Kaspi\KaspiRefreshManifest;
 use App\Services\Kaspi\KaspiRefreshPolicy;
 use App\Services\Kaspi\KaspiSingleProductPolicy;
 use Illuminate\Console\Command;
+use Illuminate\Support\Sleep;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\Console\Output\ConsoleOutputInterface;
+use Symfony\Component\Console\Output\StreamOutput;
 
 class KaspiPushProductionCommand extends Command
 {
-    protected $signature = 'kaspi:push-production {--sku=} {--limit=} {--all} {--dry-run} {--debug} {--force-content-refresh} {--approve=}';
+    protected $signature = 'kaspi:push-production {--sku=} {--sku-file=} {--limit=} {--all} {--dry-run} {--execute} {--debug} {--force-content-refresh} {--approve=} {--diagnostics}';
 
     protected $description = 'Sequential local Kaspi content enrichment with explicit scope';
 
@@ -21,6 +25,26 @@ class KaspiPushProductionCommand extends Command
         $sku = $this->option('sku');
         $limit = $this->option('limit');
         $all = (bool) $this->option('all');
+        if ($this->option('sku-file') !== null) {
+            if ($sku !== null || $limit !== null || $all || $this->option('approve') !== null
+                || ($this->option('execute') && $this->option('dry-run'))) {
+                $this->error('invalid_sku_file_options');
+
+                return self::FAILURE;
+            }
+            if (! $this->option('execute') && ! $this->option('dry-run')) {
+                $this->error('sku_file_requires_execute_or_dry_run');
+
+                return self::FAILURE;
+            }
+
+            return $this->skuFile($bridge, $candidates, $guard);
+        }
+        if ($this->option('execute')) {
+            $this->error('execute_requires_sku_file');
+
+            return self::FAILURE;
+        }
         if (($sku === null && $limit === null && ! $all)
             || ($all && ($sku !== null || $limit !== null)) || ($sku !== null && $limit !== null)) {
             $this->error('select_exactly_one_mode_sku_limit_all');
@@ -62,6 +86,112 @@ class KaspiPushProductionCommand extends Command
 
             return self::FAILURE;
         }
+    }
+
+    private function skuFile(KaspiProductionBridgeService $bridge, KaspiProductionCandidateClient $client, KaspiLocalBrowserGuard $guard): int
+    {
+        $summary = array_fill_keys(['total_requested', 'resolved', 'ready', 'skipped', 'processed', 'updated', 'failed', 'empty_description'], 0);
+        $force = (bool) $this->option('force-content-refresh');
+        $execute = (bool) $this->option('execute');
+        $batchError = null;
+        try {
+            $guard->assertAllowed();
+            $path = realpath((string) $this->option('sku-file'));
+            if ($path === false || ! is_file($path) || ! is_readable($path)) {
+                throw new \RuntimeException('sku_file_unreadable');
+            }
+            $skus = [];
+            $file = new \SplFileObject($path, 'r');
+            foreach ($file as $number => $line) {
+                if ($number === 0) {
+                    $line = preg_replace('/^\xEF\xBB\xBF/', '', $line);
+                }
+                $sku = trim($line);
+                if ($sku === '') {
+                    continue;
+                }
+                if (! mb_check_encoding($sku, 'UTF-8')) {
+                    throw new \RuntimeException('sku_file_invalid_utf8');
+                }
+                KaspiSingleProductPolicy::assertSku($sku);
+                $skus['sku:'.$sku] = $sku; // Deduplicate without converting numeric SKUs.
+            }
+            unset($file);
+            if ($skus === []) {
+                throw new \RuntimeException('sku_file_empty');
+            }
+            $summary['total_requested'] = count($skus);
+            $found = [];
+            $lastLookupAt = null;
+            $fetch = function (string $sku) use ($client, $force, &$lastLookupAt) {
+                // Candidate API allows 60/minute; preflight can otherwise burst all 133 requests.
+                if ($lastLookupAt !== null) {
+                    $delay = (int) ceil(max(0, 1.1 - (microtime(true) - $lastLookupAt)) * 1000);
+                    if ($delay > 0) {
+                        Sleep::for($delay)->milliseconds();
+                    }
+                }
+                $lastLookupAt = microtime(true);
+
+                return $client->fetch(['sku' => $sku, 'limit' => 1, 'force_content_refresh' => $force]);
+            };
+            foreach ($skus as $key => $sku) {
+                $rows = $fetch($sku);
+                $found[$key] = count($rows) === 1;
+            }
+            $foundCount = count(array_filter($found));
+            $this->json(['sku_file_count' => count($skus), 'found' => $foundCount, 'missing' => count($skus) - $foundCount]);
+            foreach ($skus as $key => $sku) {
+                if (! $found[$key]) {
+                    $summary['skipped']++;
+                    $this->json(['sku' => $sku, 'status' => 'skipped', 'reason' => 'product_not_found']);
+
+                    continue;
+                }
+                $stage = 'prepare';
+                try {
+                    // Refresh exact identity/state after preflight, never scan the catalogue.
+                    $rows = $fetch($sku);
+                    if (count($rows) !== 1) {
+                        throw new \RuntimeException('product_not_found');
+                    }
+                    if ($force) {
+                        $prepared = $bridge->prepareRefreshCandidate($rows[0], (bool) $this->option('debug'), function ($event) use (&$summary) {
+                            if ($event === 'resolved') {
+                                $summary['resolved']++;
+                            }
+                        }, $execute);
+                    } else {
+                        $prepared = $bridge->prepareCandidate($rows[0], (bool) $this->option('debug'), function () use (&$summary) {
+                            $summary['resolved']++;
+                        });
+                    }
+                    $summary['empty_description'] += $force && $prepared['payload']['content']['description'] === '' ? 1 : 0;
+                    $summary['ready']++;
+                    if ($execute) {
+                        $stage = 'import';
+                        $summary['processed']++;
+                        $result = $bridge->send($prepared['payload']);
+                        $summary['updated'] += $result['status'] === 'imported' ? 1 : 0;
+                        $this->json($result);
+                    } else {
+                        $this->json(['sku' => $sku, 'status' => 'ready', 'preview' => $prepared['preview']]);
+                    }
+                } catch (\Throwable $e) {
+                    $reason = $this->reason($e);
+                    $summary[$stage === 'import' ? 'failed' : 'skipped']++;
+                    $summary['empty_description'] += $reason === 'empty_description' ? 1 : 0;
+                    $this->json(['sku' => $sku, 'status' => $stage === 'import' ? 'failed' : 'skipped', 'reason' => $reason]);
+                } finally {
+                    unset($prepared, $rows);
+                }
+            }
+        } catch (\Throwable $e) {
+            $batchError = $this->reason($e);
+        }
+        $this->json(['summary' => $summary, 'batch_error' => $batchError]);
+
+        return $batchError !== null || $summary['failed'] > 0 ? self::FAILURE : self::SUCCESS;
     }
 
     private function batch(KaspiProductionBridgeService $bridge, KaspiProductionCandidateClient $candidates, KaspiLocalBrowserGuard $guard, ?int $limit): int
@@ -167,125 +297,167 @@ class KaspiPushProductionCommand extends Command
         $summary = array_fill_keys(['total_candidates', 'with_kaspi_source', 'resolved', 'resolve_failed', 'parsed', 'parse_failed',
             'ready', 'no_images', 'empty_description', 'empty_attributes', 'attributes_ambiguous', 'skipped',
             'planned', 'processed', 'updated', 'failed', 'cleanup_warnings'], 0);
-        $ready = [];
-        $failures = [];
-        $seen = [];
-        $cursor = 0;
-        $paginationError = null;
+        $manifest = null;
         try {
-            if ($sku !== null) {
-                KaspiSingleProductPolicy::assertSku($sku);
-            }
-            $guard->assertAllowed();
-            do {
-                $options = ['force_content_refresh' => true, 'limit' => $limit === null ? 100 : min(100, $limit - $summary['total_candidates']), 'cursor' => $cursor];
+            $failures = [];
+            $seen = [];
+            $cursor = 0;
+            $paginationError = null;
+            try {
                 if ($sku !== null) {
-                    $options['sku'] = $sku;
+                    KaspiSingleProductPolicy::assertSku($sku);
                 }
-                $page = $client->page($options);
-                $next = $page['next_cursor'];
-                if ($next !== null && (! is_int($next) || $next <= $cursor || $page['data'] === [])) {
-                    throw new \RuntimeException('candidate_invalid_cursor');
-                }
-                foreach ($page['data'] as $candidate) {
-                    if (isset($seen['sku:'.$candidate['sku']]) || isset($seen['id:'.$candidate['product_id']])) {
-                        throw new \RuntimeException('candidate_invalid_row');
+                $guard->assertAllowed();
+                $manifest = app(KaspiRefreshManifest::class);
+                $lastCandidateId = 0;
+                do {
+                    $options = ['force_content_refresh' => true, 'limit' => $limit === null ? 100 : min(100, $limit - $summary['total_candidates']), 'cursor' => $cursor];
+                    if ($sku !== null) {
+                        $options['sku'] = $sku;
                     }
-                    $seen['sku:'.$candidate['sku']] = $seen['id:'.$candidate['product_id']] = true;
-                    $summary['total_candidates']++;
-                    $row = ['id' => $candidate['product_id'], 'product_id' => $candidate['product_id'], 'sku' => $candidate['sku'], 'name' => $candidate['name'],
-                        'storefront_url' => $candidate['storefront_url'], 'kaspi_url' => null,
-                        'current_photo_count' => $candidate['current_photo_count'], 'kaspi_photo_count' => null,
-                        'current_description_present' => $candidate['current_description_present'], 'kaspi_description_present' => null,
-                        'current_attribute_count' => $candidate['current_attribute_count'], 'kaspi_attribute_count' => null,
-                        'photo_action' => 'preserve', 'description_action' => 'preserve', 'attributes_action' => 'preserve',
-                        'status' => 'skipped', 'reason' => null, 'state_fingerprint' => $candidate['state_fingerprint']];
-                    $stage = 'candidate';
-                    try {
-                        // Re-fetch exact production identity immediately before local preparation.
-                        $fresh = $client->fetch(['force_content_refresh' => true, 'sku' => $candidate['sku'], 'limit' => 1]);
-                        if (count($fresh) !== 1 || $fresh[0]['product_id'] !== $candidate['product_id'] || $fresh[0]['storefront_url'] !== $candidate['storefront_url']) {
-                            throw new \RuntimeException('identity_changed', 409);
+                    $page = $client->page($options);
+                    $next = $page['next_cursor'];
+                    if ($next !== null && (! is_int($next) || $next <= $cursor || $page['data'] === [])) {
+                        throw new \RuntimeException('candidate_invalid_cursor');
+                    }
+                    foreach ($page['data'] as $candidate) {
+                        if ($candidate['product_id'] <= $lastCandidateId || isset($seen['sku:'.$candidate['sku']])) {
+                            throw new \RuntimeException('candidate_invalid_row');
                         }
-                        if ($fresh[0]['state_fingerprint'] !== $candidate['state_fingerprint']) {
-                            throw new \RuntimeException('state_changed', 409);
-                        }
-                        $stage = 'resolve';
-                        $prepared = $bridge->prepareRefreshCandidate($fresh[0], (bool) $this->option('debug'), function ($event, $parsed) use (&$summary, &$row, &$stage) {
-                            $summary[$event]++;
-                            if ($event === 'resolved') {
-                                $row['kaspi_url'] = $parsed['url'];
-                                $stage = 'parse';
-                            } elseif ($event === 'parsed') {
-                                $stage = 'validate';
-                                $row['kaspi_photo_count'] = count($parsed['images']);
-                                $row['kaspi_description_present'] = KaspiSingleProductPolicy::description($parsed['description']) !== '';
-                                $row['kaspi_attribute_count'] = count($parsed['attributes']);
-                                if (! $row['kaspi_description_present']) {
-                                    $summary['empty_description']++;
-                                }
-                                if ($row['kaspi_attribute_count'] === 0) {
-                                    $summary['empty_attributes']++;
-                                }
+                        $lastCandidateId = $candidate['product_id'];
+                        $seen['sku:'.$candidate['sku']] = true;
+                        $summary['total_candidates']++;
+                        $row = ['id' => $candidate['product_id'], 'product_id' => $candidate['product_id'], 'sku' => $candidate['sku'], 'name' => $candidate['name'],
+                            'storefront_url' => $candidate['storefront_url'], 'kaspi_url' => null,
+                            'current_photo_count' => $candidate['current_photo_count'], 'kaspi_photo_count' => null,
+                            'current_description_present' => $candidate['current_description_present'], 'kaspi_description_present' => null,
+                            'current_attribute_count' => $candidate['current_attribute_count'], 'kaspi_attribute_count' => null,
+                            'photo_action' => 'preserve', 'description_action' => 'preserve', 'attributes_action' => 'preserve',
+                            'status' => 'skipped', 'reason' => null, 'state_fingerprint' => $candidate['state_fingerprint']];
+                        $stage = 'candidate';
+                        try {
+                            // Re-fetch exact production identity immediately before local preparation.
+                            $fresh = $client->fetch(['force_content_refresh' => true, 'sku' => $candidate['sku'], 'limit' => 1]);
+                            if (count($fresh) !== 1 || $fresh[0]['product_id'] !== $candidate['product_id'] || $fresh[0]['storefront_url'] !== $candidate['storefront_url']) {
+                                throw new \RuntimeException('identity_changed', 409);
                             }
-                        });
-                        $row = array_replace($row, ['status' => 'ready', 'photo_action' => 'replace_all',
-                            'description_action' => 'replace', 'attributes_action' => 'replace_all']);
-                        $ready[] = $prepared['payload'];
-                        $summary['ready']++;
-                    } catch (\Throwable $e) {
-                        $reason = $this->reason($e);
-                        $row['reason'] = $reason;
-                        $summary['skipped']++;
-                        if ($stage === 'resolve') {
-                            $summary['resolve_failed']++;
-                        } elseif ($stage === 'parse') {
-                            $summary['parse_failed']++;
+                            if ($fresh[0]['state_fingerprint'] !== $candidate['state_fingerprint']) {
+                                throw new \RuntimeException('state_changed', 409);
+                            }
+                            $stage = 'resolve';
+                            $prepared = $bridge->prepareRefreshCandidate($fresh[0], (bool) $this->option('debug'), function ($event, $parsed) use (&$summary, &$row, &$stage) {
+                                $summary[$event]++;
+                                if ($event === 'resolved') {
+                                    $row['kaspi_url'] = $parsed['url'];
+                                    $stage = 'parse';
+                                } elseif ($event === 'parsed') {
+                                    $stage = 'validate';
+                                    $row['kaspi_photo_count'] = count($parsed['images']);
+                                    $row['kaspi_description_present'] = KaspiSingleProductPolicy::description($parsed['description']) !== '';
+                                    $row['kaspi_attribute_count'] = count($parsed['attributes']);
+                                    if (! $row['kaspi_description_present']) {
+                                        $summary['empty_description']++;
+                                    }
+                                    if ($row['kaspi_attribute_count'] === 0) {
+                                        $summary['empty_attributes']++;
+                                    }
+                                }
+                            });
+                            $stage = 'manifest';
+                            $manifest->append($prepared['payload']);
+                            $row = array_replace($row, ['status' => 'ready', 'photo_action' => 'replace_all',
+                                'description_action' => 'replace', 'attributes_action' => 'replace_all']);
+                            $summary['ready']++;
+                        } catch (\Throwable $e) {
+                            if ($stage === 'manifest') {
+                                throw $e; // A partial spool must never authorize a subset.
+                            }
+                            $reason = $this->reason($e);
+                            $row['reason'] = $reason;
+                            $summary['skipped']++;
+                            if ($stage === 'resolve') {
+                                $summary['resolve_failed']++;
+                            } elseif ($stage === 'parse') {
+                                $summary['parse_failed']++;
+                            }
+                            if (in_array($reason, ['no_images', 'parser_images_missing'], true)) {
+                                $summary['no_images']++;
+                                $row['kaspi_photo_count'] = 0;
+                            }
+                            if ($reason === 'attributes_ambiguous') {
+                                $summary['attributes_ambiguous']++;
+                            }
+                            $failures[] = ['sku' => $candidate['sku'], 'product_id' => $candidate['product_id'], 'status' => 'skipped', 'reason' => $reason];
                         }
-                        if (in_array($reason, ['no_images', 'parser_images_missing'], true)) {
-                            $summary['no_images']++;
-                            $row['kaspi_photo_count'] = 0;
+                        $this->json($row);
+                        unset($prepared, $fresh, $row);
+                        if ($dry && $this->option('diagnostics')) {
+                            $this->manifestDiagnostics($manifest);
                         }
-                        if ($reason === 'attributes_ambiguous') {
-                            $summary['attributes_ambiguous']++;
+                        if ($limit !== null && $summary['total_candidates'] >= $limit) {
+                            break;
                         }
-                        $failures[] = ['sku' => $candidate['sku'], 'product_id' => $candidate['product_id'], 'status' => 'skipped', 'reason' => $reason];
                     }
-                    $this->json($row);
-                    if ($limit !== null && $summary['total_candidates'] >= $limit) {
-                        break;
-                    }
-                }
-                $cursor = $next;
-            } while ($cursor !== null && ($limit === null || $summary['total_candidates'] < $limit));
-        } catch (\Throwable $e) {
-            $paginationError = $this->reason($e);
-        }
-        $summary['planned'] = count($ready);
-        $hash = $paginationError === null ? KaspiRefreshPolicy::approval($ready) : null;
-        // Complete-set comparison BEFORE the first POST. Never incrementally approve a batch.
-        if (! $dry && $paginationError === null && ! hash_equals($hash, $approve)) {
-            $paginationError = 'approval_mismatch';
-        }
-        if (! $dry && $paginationError === null) {
-            foreach ($ready as $payload) {
-                $summary['processed']++;
-                try {
-                    $result = $bridge->send($payload);
-                    $summary['updated'] += $result['status'] === 'imported' ? 1 : 0;
-                    $summary['cleanup_warnings'] += count($result['cleanup_warnings']);
-                    $this->json($result);
-                } catch (\Throwable $e) {
-                    $summary['failed']++;
-                    $result = ['sku' => $payload['sku'], 'product_id' => $payload['product_id'], 'status' => 'failed', 'reason' => $this->reason($e)];
-                    $failures[] = $result;
-                    $this->json($result);
-                }
+                    $cursor = $next;
+                } while ($cursor !== null && ($limit === null || $summary['total_candidates'] < $limit));
+            } catch (\Throwable $e) {
+                $paginationError = $this->reason($e);
             }
-        }
-        $this->json(['summary' => $summary, 'approval_hash' => $hash, 'failures' => $failures, 'batch_error' => $paginationError]);
+            $summary['planned'] = $manifest?->count() ?? 0;
+            $hash = null;
+            $this->forceProgress('[finalizing] ready='.$summary['planned']);
+            try {
+                if ($paginationError === null) {
+                    $this->forceProgress('[finalizing] canonical manifest complete');
+                    $hash = $manifest->approval();
+                    $this->forceProgress('[finalizing] approval hash calculated');
+                }
+                // Complete-set comparison BEFORE the first POST. Never incrementally approve a batch.
+                if (! $dry && $paginationError === null && ! hash_equals($hash, $approve)) {
+                    $paginationError = 'approval_mismatch';
+                }
+                if (! $dry && $paginationError === null) {
+                    foreach ($manifest->payloads() as $payload) {
+                        $summary['processed']++;
+                        try {
+                            $result = $bridge->send($payload);
+                            $summary['updated'] += $result['status'] === 'imported' ? 1 : 0;
+                            $summary['cleanup_warnings'] += count($result['cleanup_warnings']);
+                            $this->json($result);
+                        } catch (\Throwable $e) {
+                            $summary['failed']++;
+                            $result = ['sku' => $payload['sku'], 'product_id' => $payload['product_id'], 'status' => 'failed', 'reason' => $this->reason($e)];
+                            $failures[] = $result;
+                            $this->json($result);
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                $paginationError = $this->reason($e);
+                $hash = null;
+            }
+            if ($dry && $this->option('diagnostics') && $manifest !== null) {
+                $this->manifestDiagnostics($manifest);
+            }
+            $this->json(['summary' => $summary, 'approval_hash' => $hash, 'failures' => $failures, 'batch_error' => $paginationError]);
 
-        return $paginationError !== null || $summary['failed'] > 0 ? self::FAILURE : self::SUCCESS;
+            return $paginationError !== null || $summary['failed'] > 0 ? self::FAILURE : self::SUCCESS;
+        } finally {
+            $manifest?->close();
+        }
+    }
+
+    private function forceProgress(string $message): void
+    {
+        $output = $this->output->getOutput();
+        $stderr = $output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : new StreamOutput(fopen('php://stderr', 'w'));
+        $stderr->writeln($message);
+    }
+
+    private function manifestDiagnostics(KaspiRefreshManifest $manifest): void
+    {
+        $this->forceProgress(sprintf('[diagnostics] memory_bytes=%d peak_bytes=%d ready=%d manifest_bytes=%d',
+            memory_get_usage(true), memory_get_peak_usage(true), $manifest->count(), $manifest->bytes()));
     }
 
     private function reason(\Throwable $e): string
@@ -294,7 +466,9 @@ class KaspiPushProductionCommand extends Command
             return 'invalid_payload';
         }
         $reason = explode(':', $e->getMessage(), 2)[0];
-        $allowed = ['invalid_exact_sku', 'local_browser_disabled', 'production_base_mismatch', 'widget_configuration_missing',
+        $allowed = ['sku_file_unreadable', 'sku_file_invalid_utf8', 'sku_file_empty', 'product_not_found',
+            'manifest_create_failed', 'manifest_write_failed', 'manifest_read_failed', 'manifest_invalid_order', 'manifest_not_sealed',
+            'invalid_exact_sku', 'local_browser_disabled', 'production_base_mismatch', 'widget_configuration_missing',
             'candidate_identity_mismatch', 'resolver_not_verified', 'invalid_preview_response',
             'invalid_import_response_check_before_retry', 'internal_api_token_missing', 'kaspi_internal_api_token_missing',
             'invalid_production_base_url', 'import_transport_failed_check_before_retry', 'preview_transport_failed',
