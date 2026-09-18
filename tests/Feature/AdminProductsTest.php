@@ -206,6 +206,110 @@ class AdminProductsTest extends TestCase
             ->assertTableActionHidden('delete', $product);
     }
 
+    public function test_filters_ranges_search_and_sorting_use_existing_product_fields_without_writes(): void
+    {
+        $products = collect();
+        foreach ([-1, 0, 1, 2, 5, 10, 20, 100, 101] as $index => $quantity) {
+            $product = $this->product('filter-'.$index, $index % 2 === 0);
+            $product->update([
+                'quantity' => $quantity,
+                'in_stock' => $quantity <= 0, // Deliberately contradict quantity.
+                'category_id' => $index % 3 === 0 ? $this->secondCategory->id : $this->firstCategory->id,
+                'main_image' => match ($index % 4) { 0 => null, 1 => '', 2 => '0', default => 'products/photo.jpg' },
+            ]);
+            $products->push($product->fresh());
+        }
+        // Gallery and WebP do not supply the thumbnail on this admin page.
+        $products[0]->images()->create(['path' => 'products/gallery.jpg']);
+        $products[0]->update(['main_image_webp' => 'products/derivative.webp']);
+        $before = Product::query()->orderBy('id')->get()->toArray();
+        $component = Livewire::test(ListProducts::class)->assertCountTableRecords(9);
+        $cases = [
+            ['category_id', $this->firstCategory->id, fn ($p) => $p->category_id === $this->firstCategory->id],
+            ['category_id', '__empty', fn ($p) => false],
+            ['photo', 'with', fn ($p) => (bool) $p->main_image],
+            ['photo', 'without', fn ($p) => ! $p->main_image],
+            ['is_active', '1', fn ($p) => $p->is_active],
+            ['is_active', '0', fn ($p) => ! $p->is_active],
+            ['availability', 'in', fn ($p) => $p->quantity > 0],
+            ['availability', 'out', fn ($p) => $p->quantity <= 0],
+        ];
+        foreach ($cases as [$filter, $value, $matches]) {
+            $expected = $products->filter($matches);
+            $component->call('resetTableFiltersForm')->filterTable($filter, $value)
+                ->assertCanSeeTableRecords($expected)
+                ->assertCountTableRecords($expected->count());
+        }
+        foreach ([[0, 0], [0, 100], [1, 10], [100, null], [null, 5]] as [$from, $to]) {
+            $expected = $products->filter(fn ($p) => ($from === null || $p->quantity >= $from) && ($to === null || $p->quantity <= $to));
+            $component->call('resetTableFiltersForm')
+                ->filterTable('quantity_range', ['from' => $from, 'to' => $to])
+                ->assertCanSeeTableRecords($expected)->assertCountTableRecords($expected->count());
+        }
+        $component->call('resetTableFiltersForm')
+            ->filterTable('category_id', $this->firstCategory->id)
+            ->filterTable('photo', 'without')
+            ->assertCanSeeTableRecords($products->only([1, 2, 4, 5, 8]))->assertCountTableRecords(5)
+            ->filterTable('is_active', '1')
+            ->filterTable('quantity_range', ['from' => 0, 'to' => 100])
+            ->assertCanSeeTableRecords($products->only([2, 4]))->assertCountTableRecords(2)
+            ->filterTable('availability', 'in')
+            ->searchTable('filter-4')->assertCanSeeTableRecords([$products[4]])->assertCountTableRecords(1)
+            ->call('resetTableFiltersForm')->assertSet('tableSearch', '')->assertCountTableRecords(9)
+            ->sortTable('quantity', 'asc')->assertCanSeeTableRecords($products, inOrder: true)
+            ->sortTable('quantity', 'desc')->assertCanSeeTableRecords($products->reverse(), inOrder: true);
+        $this->assertSame($before, Product::query()->orderBy('id')->get()->toArray());
+    }
+
+    public function test_without_category_finds_missing_relationships(): void
+    {
+        // Production migrations require a category. Allow a legacy uncategorized
+        // record only in this disposable SQLite fixture, without changing the app schema.
+        Schema::table('products', function (Blueprint $table): void {
+            $table->unsignedBigInteger('category_id')->nullable()->change();
+        });
+        $categorized = $this->product('categorized');
+        $uncategorized = $this->product('uncategorized');
+        $uncategorized->update(['category_id' => null]);
+
+        Livewire::test(ListProducts::class)
+            ->filterTable('category_id', '__empty')
+            ->assertCanSeeTableRecords([$uncategorized])
+            ->assertCanNotSeeTableRecords([$categorized])
+            ->assertCountTableRecords(1)
+            ->call('resetTableFiltersForm')->assertCountTableRecords(2);
+    }
+
+    public function test_filters_and_sort_are_preserved_on_pagination_and_reset_returns_full_list(): void
+    {
+        $matching = collect();
+        foreach (range(1, 30) as $index) {
+            $product = $this->product('page-'.$index);
+            $product->update(['quantity' => $index]);
+            $matching->push($product);
+        }
+        $excluded = $this->product('excluded', false);
+        Livewire::test(ListProducts::class)
+            ->filterTable('category_id', $this->firstCategory->id)
+            ->filterTable('photo', 'with')
+            ->filterTable('is_active', '1')
+            ->filterTable('availability', 'in')
+            ->filterTable('quantity_range', ['from' => 1, 'to' => 100])
+            ->searchTable('page-')->sortTable('quantity', 'asc')
+            ->assertCountTableRecords(30)
+            ->call('gotoPage', 2)
+            ->assertCanSeeTableRecords($matching->slice(25), inOrder: true)
+            ->assertCanNotSeeTableRecords($matching->take(25))
+            ->assertCanNotSeeTableRecords([$excluded])
+            ->assertSet('tableFilters.quantity_range.from', 1)
+            ->assertSet('tableSearch', 'page-')
+            ->assertSet('tableSort', 'quantity:asc')
+            ->call('resetTableFiltersForm')
+            ->assertSet('paginators.page', 1)
+            ->assertSet('tableSort', null)
+            ->assertCountTableRecords(31);
+    }
+
     private function runMigration(string $file): void
     {
         (require database_path('migrations/'.$file))->up();

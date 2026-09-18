@@ -26,7 +26,11 @@ use Filament\Tables\Columns\SelectColumn;
 use Filament\Tables\Columns\TextInputColumn;
 use Filament\Tables\Columns\ToggleColumn;
 use Filament\Tables\Columns\ViewColumn;
+use Filament\Tables\Enums\FiltersLayout;
+use Filament\Tables\Filters\Filter;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Gate;
 use Throwable;
@@ -134,6 +138,7 @@ class ProductResource extends Resource
                     ->width('7rem'),
                 TextInputColumn::make('quantity')
                     ->label('Ост.')
+                    ->sortable()
                     ->type('number')
                     ->rules(['integer', 'min:0'])
                     ->disabled(fn (Product $record): bool => ! static::canEdit($record))
@@ -148,6 +153,63 @@ class ProductResource extends Resource
                     ->label('Хит')
                     ->disabled(fn (Product $record): bool => ! static::canEdit($record)),
             ])
+            ->filters([
+                SelectFilter::make('category_id')
+                    ->label('Категория')
+                    ->placeholder('Все категории')
+                    ->relationship('category', 'name', fn (Builder $query) => $query->ordered(), hasEmptyOption: true)
+                    ->emptyRelationshipOptionLabel('Без категории')
+                    ->searchable()
+                    ->preload(),
+                SelectFilter::make('photo')
+                    ->label('Фото')
+                    ->placeholder('Все')
+                    ->options(['with' => 'С фото', 'without' => 'Без фото'])
+                    // The existing table thumbnail uses main_image, not the gallery or WebP derivative.
+                    ->query(function (Builder $query, array $data): Builder {
+                        return match ($data['value'] ?? null) {
+                            'with' => $query->whereNotNull('main_image')->where('main_image', '!=', '')->where('main_image', '!=', '0'),
+                            'without' => $query->where(fn (Builder $query) => $query->whereNull('main_image')->orWhere('main_image', '')->orWhere('main_image', '0')),
+                            default => $query,
+                        };
+                    }),
+                SelectFilter::make('is_active')
+                    ->label('Статус')
+                    ->placeholder('Все')
+                    ->options([1 => 'Активные', 0 => 'Неактивные']),
+                SelectFilter::make('availability')
+                    ->label('Наличие')
+                    ->placeholder('Все')
+                    ->options(['in' => 'В наличии', 'out' => 'Нет в наличии'])
+                    ->query(fn (Builder $query, array $data): Builder => match ($data['value'] ?? null) {
+                        'in' => $query->where('quantity', '>', 0),
+                        'out' => $query->where('quantity', '<=', 0),
+                        default => $query,
+                    }),
+                Filter::make('quantity_range')
+                    ->schema([
+                        TextInput::make('from')->label('Остаток от')->numeric()->live(debounce: 400),
+                        TextInput::make('to')->label('Остаток до')->numeric()->live(debounce: 400),
+                    ])
+                    ->columns(2)
+                    ->columnSpan(['default' => 1, 'sm' => 2])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if (is_numeric($data['from'] ?? null)) {
+                            $query->where('quantity', '>=', $data['from']);
+                        }
+                        if (is_numeric($data['to'] ?? null)) {
+                            $query->where('quantity', '<=', $data['to']);
+                        }
+
+                        return $query;
+                    })
+                    ->indicateUsing(fn (array $data): array => array_filter([
+                        is_numeric($data['from'] ?? null) ? 'Остаток от: '.$data['from'] : null,
+                        is_numeric($data['to'] ?? null) ? 'Остаток до: '.$data['to'] : null,
+                    ])),
+            ], layout: FiltersLayout::AboveContent)
+            ->filtersFormColumns(['default' => 1, 'sm' => 2, 'lg' => 3, 'xl' => 6])
+            ->deferFilters(false)
             ->recordActions([
                 EditAction::make()
                     ->label('Редактировать')

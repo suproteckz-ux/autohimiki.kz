@@ -13,6 +13,13 @@ class ListProducts extends ListRecords
 
     protected Width|string|null $maxContentWidth = Width::Full;
 
+    public function resetTableFiltersForm(): void
+    {
+        $this->removeTableFilters();
+        $this->tableSort = null;
+        $this->updatedTableSort();
+    }
+
     protected function getHeaderActions(): array
     {
         return [
