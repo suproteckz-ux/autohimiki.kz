@@ -91,6 +91,11 @@ class Product extends Model
         return $this->belongsTo(Category::class);
     }
 
+    public function ozonLink(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(OzonProductLink::class, 'local_product_id');
+    }
+
     public function brand(): BelongsTo
     {
         return $this->belongsTo(Brand::class);

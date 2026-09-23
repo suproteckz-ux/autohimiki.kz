@@ -19,7 +19,7 @@ class OzonConfirmPublished extends Command
 
             return self::FAILURE;
         }
-        $link->update(['status' => 'published', 'publication_confirmed_at' => now()]);
+        app(\App\Services\Ozon\OzonExporter::class)->confirmPublished($link);
         $this->info('Manual publication recorded; subsequent stock sync can make this product available for sale.');
 
         return self::SUCCESS;

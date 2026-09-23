@@ -20,7 +20,7 @@ class OzonExportTest extends TestCase
         parent::setUp();
         foreach (['2025_01_001_create_categories_table.php', '2025_01_002_create_brands_table.php',
             '2025_01_003_create_products_table.php', '2025_01_004_create_product_images_table.php',
-            '2026_09_23_000001_create_ozon_export_tables.php'] as $file) {
+            '2026_09_23_000001_create_ozon_export_tables.php', '2026_09_23_000002_add_ozon_status_details.php'] as $file) {
             (require database_path('migrations/'.$file))->up();
         }
         DB::table('categories')->insert([
@@ -273,7 +273,7 @@ class OzonExportTest extends TestCase
         Http::fakeSequence()->push(['result' => ['items' => [['offer_id' => $link->offer_id, 'product_id' => 0, 'status' => 'pending', 'errors' => []]]]])
             ->push(['result' => ['items' => [['offer_id' => $link->offer_id, 'product_id' => 0, 'errors' => [['message' => 'secret-test-key']]]]]]);
         app(OzonExporter::class)->refresh($link);
-        $this->assertSame('exported', $link->fresh()->status);
+        $this->assertSame('processing', $link->fresh()->status);
         app(OzonExporter::class)->refresh($link);
         $this->assertSame('error', $link->fresh()->status);
         $this->assertStringNotContainsString('secret-test-key', $link->fresh()->last_error);

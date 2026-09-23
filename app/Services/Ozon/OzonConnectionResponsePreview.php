@@ -8,6 +8,15 @@ class OzonConnectionResponsePreview
 {
     private array $secrets = [];
 
+    public function message(mixed $value): string
+    {
+        $this->secrets = array_values(array_filter([
+            (string) config('ozon.api_key'), (string) config('ozon.client_id'),
+        ], fn ($value) => $value !== ''));
+
+        return is_scalar($value) ? $this->text((string) $value) : mb_substr((string) json_encode($this->jsonValue($value), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE), 0, 500);
+    }
+
     public function build(Response $response): array
     {
         $this->secrets = array_values(array_filter([

@@ -67,13 +67,23 @@ class OzonExporter
         if (! $link->import_task_id) {
             throw new \RuntimeException('no_import_task: reconcile offer_id in seller cabinet');
         }
-        $data = $this->client->request('/v1/product/import/info', ['task_id' => (int) $link->import_task_id]);
+        $link->update(['last_status_check_at' => now()]);
+        try {
+            $data = $this->client->request('/v1/product/import/info', ['task_id' => (int) $link->import_task_id]);
+        } catch (\Throwable $e) {
+            $link->update(['last_error' => $this->safeError($e)]);
+            throw new \RuntimeException($this->safeError($e));
+        }
         foreach ($data['result']['items'] ?? [] as $item) {
             if (($item['offer_id'] ?? null) !== $link->offer_id) {
                 continue;
             }
+            $safe = app(OzonConnectionResponsePreview::class);
+            $message = $safe->message(array_intersect_key($item, array_flip(['errors', 'message', 'validation_result'])));
+            $link->update(['ozon_status' => mb_substr($safe->message($item['status'] ?? 'unknown'), 0, 100),
+                'ozon_status_message' => $message === '[]' ? null : $message]);
             if (! empty($item['errors'])) {
-                $link->update(['status' => 'error', 'last_error' => 'ozon_import_item_errors: inspect seller cabinet']);
+                $link->update(['status' => 'error', 'last_error' => 'ozon_import_item_errors: '.$message]);
 
                 return;
             }
@@ -85,11 +95,21 @@ class OzonExporter
                 return;
             }
             // Processing is not success. Do not invent a product ID or a draft status.
-            $link->update(['last_error' => 'ozon_import_processing_or_rejected: inspect seller cabinet']);
+            $status = in_array($item['status'] ?? '', ['pending', 'processing'], true) ? 'processing' : 'error';
+            $link->update(['status' => $status, 'last_error' => $status === 'error' ? 'ozon_import_processing_or_rejected: inspect seller cabinet' : null]);
 
             return;
         }
+        $link->update(['last_error' => 'ozon_import_item_missing']);
         throw new \RuntimeException('ozon_import_item_missing');
+    }
+
+    public function confirmPublished(OzonProductLink $link): void
+    {
+        if (! $link->ozon_product_id || ! in_array($link->status, ['requires_manual_review', 'ready', 'published'], true)) {
+            throw new \RuntimeException('ozon_verified_product_required');
+        }
+        $link->update(['status' => 'published', 'publication_confirmed_at' => now()]);
     }
 
     public function stock(Product $product, OzonProductLink $link): bool
