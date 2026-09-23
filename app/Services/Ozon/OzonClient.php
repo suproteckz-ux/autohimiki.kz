@@ -109,6 +109,41 @@ class OzonClient
         return $data;
     }
 
+    public function categoryBranch(int $id): array
+    {
+        if (trim((string) config('ozon.client_id')) === '' || trim((string) config('ozon.api_key')) === '') {
+            throw new \RuntimeException('credentials missing');
+        }
+        $body = (string) json_encode(['description_category_id' => $id, 'language' => 'DEFAULT']);
+        try {
+            $response = Http::withHeaders(['Client-Id' => config('ozon.client_id'), 'Api-Key' => config('ozon.api_key')])
+                ->acceptJson()->connectTimeout(10)->timeout(config('ozon.timeout'))
+                ->withOptions(['allow_redirects' => false])
+                ->withBody($body, 'application/json')
+                ->post(self::BASE_URL.self::CATEGORY_TREE_ENDPOINT);
+        } catch (ConnectionException) {
+            throw new \RuntimeException('network error');
+        } catch (\Throwable) {
+            throw new \RuntimeException('network error');
+        }
+        $status = $response->status();
+        $data = $response->json();
+        $reason = match (true) {
+            $status === 401 => 'unauthorized',
+            $status === 403 => 'forbidden',
+            $status === 429 => 'rate limited',
+            $status >= 500 => 'API unavailable',
+            ! $response->successful() => 'API request rejected',
+            ! is_array($data) => 'invalid JSON response',
+            default => null,
+        };
+        if ($reason !== null) {
+            throw new \RuntimeException($reason.' (HTTP '.$status.')');
+        }
+
+        return $data;
+    }
+
     public function safeDisplay(mixed $value): string
     {
         $text = is_scalar($value) ? (string) $value : '';
