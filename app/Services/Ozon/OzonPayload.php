@@ -54,7 +54,7 @@ class OzonPayload
         return array_values(array_unique($urls));
     }
 
-    public function create(Product $product, OzonCategoryMapping $mapping): array
+    public function validate(Product $product): void
     {
         if (trim((string) $product->sku) === '' || trim((string) $product->name) === '' || (float) $product->price <= 0) {
             throw new \RuntimeException('missing_sku_name_or_price');
@@ -62,10 +62,18 @@ class OzonPayload
         if (mb_strlen($product->sku) > 50) {
             throw new \RuntimeException('offer_id_too_long');
         }
+    }
+
+    public function create(Product $product, OzonCategoryMapping $mapping, ?int $annotationId = null): array
+    {
+        $this->validate($product);
         $images = $this->images($product);
         $description = $this->description($product);
+        if ($description !== '' && ($annotationId === null || $annotationId <= 0)) {
+            throw new \RuntimeException('ozon_annotation_missing: resolve for the exact category/type before import');
+        }
 
-        return [
+        $item = [
             'offer_id' => $product->sku,
             'name' => mb_substr(trim($product->name), 0, 500),
             'description_category_id' => (int) $mapping->ozon_description_category_id,
@@ -76,8 +84,21 @@ class OzonPayload
             'primary_image' => $images[0] ?? '',
             'images' => $images,
             'attributes' => $description === '' ? [] : [
-                ['id' => 4191, 'complex_id' => 0, 'values' => [['value' => $description]]],
+                ['id' => $annotationId, 'complex_id' => 0, 'values' => [['dictionary_value_id' => 0, 'value' => $description]]],
             ],
+            'complex_attributes' => [],
         ];
+        // Source exports explicit mm/g fields. Only use exact, unit-labelled local data;
+        // never copy its example dimensions or turn missing measurements into zero.
+        $attributes = $product->getAttribute('attributes') ?? [];
+        foreach (['depth_mm' => 'depth', 'height_mm' => 'height', 'width_mm' => 'width', 'weight_g' => 'weight'] as $local => $remote) {
+            $value = $attributes[$local] ?? null;
+            if (is_scalar($value) && ctype_digit((string) $value) && (int) $value > 0) {
+                $item[$remote] = (int) $value;
+                $item[$remote === 'weight' ? 'weight_unit' : 'dimension_unit'] = $remote === 'weight' ? 'g' : 'mm';
+            }
+        }
+
+        return $item;
     }
 }

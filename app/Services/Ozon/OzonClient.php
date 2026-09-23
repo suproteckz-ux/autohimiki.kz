@@ -2,41 +2,148 @@
 
 namespace App\Services\Ozon;
 
+use App\Models\OzonCategoryMapping;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 
 class OzonClient
 {
     // Deliberate allow-list: no category tree, price update or content re-import.
-    private const PATHS = ['/v3/product/list', '/v3/product/import', '/v1/product/import/info', '/v2/products/stocks'];
+    private const PATHS = ['/v3/product/list', '/v3/product/import', '/v1/product/import/info', '/v2/products/stocks', '/v1/description-category/attribute'];
+
+    private array $annotationIds = [];
 
     public function testConnection(): string
     {
-        if (trim((string) config('ozon.client_id')) === '' || trim((string) config('ozon.api_key')) === '') {
-            return 'credentials missing';
-        }
-        // Fixed read-only endpoint, one bounded request. No configurable bypass for writes.
         try {
-            $response = Http::withHeaders(['Client-Id' => config('ozon.client_id'), 'Api-Key' => config('ozon.api_key')])
-                ->acceptJson()->connectTimeout(10)->timeout(config('ozon.timeout'))
-                ->withOptions(['allow_redirects' => false])
-                ->post('https://api-seller.ozon.ru/v3/product/list', [
-                    'filter' => ['visibility' => 'ALL'], 'limit' => 1,
-                ]);
-            if ($response->status() === 401) {
-                return 'unauthorized';
-            }
-            if ($response->status() === 403) {
-                return 'forbidden';
-            }
-            if ($response->successful() && is_array($response->json('result.items'))) {
-                return 'OK';
-            }
-        } catch (\Throwable) {
-            // Do not expose the request, response body or exception (may contain credentials).
+            $this->sellerInfo();
+
+            return 'OK';
+        } catch (\RuntimeException $error) {
+            return $error->getMessage();
+        }
+    }
+
+    public function sellerInfo(): array
+    {
+        $data = $this->diagnosticRead('/v1/seller/info');
+        if (empty($data['company']) && empty($data['result'])) {
+            throw new \RuntimeException('invalid seller response (HTTP 200)');
         }
 
-        return 'API unavailable';
+        return $data;
+    }
+
+    public function warehouses(string $cursor = ''): array
+    {
+        // One explicit page; no automatic full scan or database mirror.
+        $data = $this->diagnosticRead('/v2/warehouse/list', ['limit' => 100, 'cursor' => $cursor]);
+        if (! isset($data['warehouses']) || ! is_array($data['warehouses']) || ! array_is_list($data['warehouses'])) {
+            throw new \RuntimeException('invalid warehouse response (HTTP 200)');
+        }
+        if (($data['has_next'] ?? false) && (! is_string($data['cursor'] ?? null) || $data['cursor'] === '' || $data['cursor'] === $cursor)) {
+            throw new \RuntimeException('invalid warehouse cursor (HTTP 200)');
+        }
+        foreach ($data['warehouses'] as $item) {
+            if (! is_array($item) || ! is_scalar($item['warehouse_id'] ?? null)) {
+                throw new \RuntimeException('invalid warehouse item (HTTP 200)');
+            }
+        }
+
+        return $data;
+    }
+
+    public function safeDisplay(mixed $value): string
+    {
+        $text = is_scalar($value) ? (string) $value : '';
+        foreach ([config('ozon.api_key'), config('ozon.client_id')] as $secret) {
+            if (is_string($secret) && $secret !== '') {
+                $text = str_replace($secret, '[redacted]', $text);
+            }
+        }
+
+        return mb_substr(preg_replace('/[\x00-\x1f\x7f]/', '', $text), 0, 500);
+    }
+
+    private function diagnosticRead(string $path, array $payload = []): array
+    {
+        if (! in_array($path, ['/v1/seller/info', '/v2/warehouse/list'], true)) {
+            throw new \RuntimeException('read-only endpoint not allowed');
+        }
+        if (trim((string) config('ozon.client_id')) === '' || trim((string) config('ozon.api_key')) === '') {
+            throw new \RuntimeException('credentials missing');
+        }
+        // Source: autohimiya-laravel, fixes 6a9543c and 413e96e. No DB writes/retries.
+        try {
+            $request = Http::withHeaders(['Client-Id' => config('ozon.client_id'), 'Api-Key' => config('ozon.api_key')])
+                ->acceptJson()->connectTimeout(10)->timeout(config('ozon.timeout'))
+                ->withOptions(['allow_redirects' => false]);
+            $response = $path === '/v1/seller/info'
+                ? $request->withBody('{}', 'application/json')->post('https://api-seller.ozon.ru'.$path)
+                : $request->asJson()->post('https://api-seller.ozon.ru'.$path, $payload);
+        } catch (ConnectionException $error) {
+            $timeout = str_contains(strtolower($error->getMessage()), 'timed out') || str_contains($error->getMessage(), 'cURL error 28');
+            throw new \RuntimeException($timeout ? 'timeout' : 'network error');
+        } catch (\Throwable) {
+            throw new \RuntimeException('network error');
+        }
+        $status = $response->status();
+        $data = $response->json();
+        $businessError = is_array($data) ? ($data['message'] ?? $data['error'] ?? null) : null;
+        $reason = match (true) {
+            $status === 401 => 'unauthorized',
+            $status === 403 => 'forbidden',
+            $status === 429 => 'rate limited',
+            $status >= 500 => 'API unavailable',
+            ! $response->successful() => 'API request rejected',
+            ! is_array($data) => 'invalid JSON response',
+            ! empty($businessError) => 'API business error',
+            default => null,
+        };
+        if ($reason !== null) {
+            if ($status === 400 && is_string($businessError)) {
+                $reason = match (true) {
+                    str_contains(strtolower($businessError), 'obsolete method') => 'obsolete method',
+                    str_contains(strtolower($businessError), 'proto: syntax error') => 'invalid JSON object contract',
+                    default => $reason,
+                };
+            }
+            throw new \RuntimeException($reason.' (HTTP '.$status.')');
+        }
+
+        return $data;
+    }
+
+    public function annotationId(OzonCategoryMapping $mapping): int
+    {
+        $this->assertEnabled();
+        if (! $mapping->enabled || (int) $mapping->ozon_description_category_id <= 0 || (int) $mapping->ozon_type_id <= 0) {
+            throw new \RuntimeException('ozon_mapping_missing');
+        }
+        $key = config('ozon.client_id').':'.$mapping->ozon_description_category_id.':'.$mapping->ozon_type_id;
+        if (isset($this->annotationIds[$key])) {
+            return $this->annotationIds[$key];
+        }
+        $data = $this->request('/v1/description-category/attribute', [
+            'description_category_id' => (int) $mapping->ozon_description_category_id,
+            'type_id' => (int) $mapping->ozon_type_id, 'language' => 'DEFAULT',
+        ]);
+        if (! isset($data['result']) || ! is_array($data['result'])) {
+            throw new \RuntimeException('ozon_annotation_invalid_response');
+        }
+        // Only retain the annotation ID in memory for this command. No taxonomy storage.
+        foreach (['аннотация', 'описание товара'] as $name) {
+            foreach ($data['result'] ?? [] as $attribute) {
+                if (! is_array($attribute) || mb_strtolower(trim((string) ($attribute['name'] ?? ''))) !== $name) {
+                    continue;
+                }
+                $id = $attribute['id'] ?? $attribute['attribute_id'] ?? null;
+                if (is_numeric($id) && (int) $id > 0 && empty($attribute['dictionary_id']) && empty($attribute['complex_id'])) {
+                    return $this->annotationIds[$key] = (int) $id;
+                }
+            }
+        }
+        throw new \RuntimeException('ozon_annotation_missing: targeted mapping attribute not found');
     }
 
     public function assertEnabled(): void
@@ -83,6 +190,9 @@ class OzonClient
             $data = $response->json();
             if (! is_array($data)) {
                 throw new \RuntimeException('ozon_invalid_response');
+            }
+            if (! empty($data['message']) || ! empty($data['error'])) {
+                throw new \RuntimeException('ozon_business_error');
             }
 
             return $data;

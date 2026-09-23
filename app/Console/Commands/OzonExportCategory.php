@@ -87,7 +87,7 @@ class OzonExportCategory extends Command
                     if (! $mapping) {
                         throw new \RuntimeException('ozon_mapping_missing');
                     }
-                    $payload->create($product, $mapping);
+                    $payload->validate($product);
                     $counts['Ready']++;
                     if (! $this->option('dry-run')) {
                         $result = $exporter->export($product, $mapping);
@@ -108,7 +108,7 @@ class OzonExportCategory extends Command
             $this->table(['Report', 'Count'], collect($counts)->map(fn ($value, $key) => [$key, $value])->values()->all());
             $this->line('Accepted task is not a created draft. Run ozon:refresh-imports and inspect the seller cabinet.');
             if ($this->option('dry-run')) {
-                $this->line('Dry-run: no HTTP requests or database writes. Remote duplicates, image availability and API validation are NOT checked.');
+                $this->line('Dry-run: no HTTP requests or database writes. Remote duplicates, annotation attribute ID, image availability and API validation are NOT checked.');
             }
 
             return $counts['Failed'] > 0 ? self::FAILURE : self::SUCCESS;

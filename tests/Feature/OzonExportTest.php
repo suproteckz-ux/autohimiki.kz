@@ -65,6 +65,7 @@ class OzonExportTest extends TestCase
     {
         Http::fake([
             '*/v3/product/list' => Http::response(['result' => ['items' => [], 'total' => 0]]),
+            '*/v1/description-category/attribute' => Http::response(['result' => [['id' => 71001, 'name' => 'Аннотация', 'dictionary_id' => 0]]]),
             '*/v3/product/import' => Http::response(['result' => ['task_id' => 987]]),
         ]);
     }
@@ -76,7 +77,7 @@ class OzonExportTest extends TestCase
         $this->product('OTHER', ['category_id' => 2]);
         $this->product('INACTIVE', ['is_active' => false]);
         $this->artisan('ozon:export-category --category=interior')->assertSuccessful();
-        Http::assertSentCount(2);
+        Http::assertSentCount(3);
         Http::assertSent(fn ($r) => str_ends_with($r->url(), '/v3/product/import') && $r['items'][0]['offer_id'] === 'SKU-001');
         $this->assertSame(1, OzonProductLink::count());
     }
@@ -85,7 +86,9 @@ class OzonExportTest extends TestCase
     {
         $product = $this->product('РТ-0001');
         DB::table('product_images')->insert(['product_id' => $product->id, 'path' => 'gallery/two.jpg']);
-        $item = app(OzonPayload::class)->create($product, $this->mapping());
+        $item = app(OzonPayload::class)->create($product, $this->mapping(), 71001);
+        $this->assertSame(71001, $item['attributes'][0]['id']);
+        $this->assertSame(0, $item['attributes'][0]['values'][0]['dictionary_value_id']);
         $this->assertSame('РТ-0001', $item['offer_id']);
         $this->assertSame($product->name, $item['name']);
         $this->assertSame('1500.00', $item['price']);
@@ -131,7 +134,7 @@ class OzonExportTest extends TestCase
         $this->product('GOOD', ['description' => null, 'main_image' => null]);
         $this->artisan('ozon:export-category --category=interior')->assertFailed();
         $this->assertSame('GOOD', OzonProductLink::sole()->offer_id);
-        Http::assertSentCount(2);
+        Http::assertSentCount(3);
     }
 
     public function test_local_existing_link_never_receives_price_or_content_update(): void
@@ -158,11 +161,12 @@ class OzonExportTest extends TestCase
         $this->product();
         Http::fake([
             '*/v3/product/list' => Http::response(['result' => ['items' => [], 'total' => 0]]),
+            '*/v1/description-category/attribute' => Http::response(['result' => [['id' => 71001, 'name' => 'Аннотация']]]),
             '*/v3/product/import' => Http::response(['message' => 'unknown'], 503),
         ]);
         $this->artisan('ozon:export-category --category=interior')->assertFailed();
         $this->artisan('ozon:export-category --category=interior')->assertFailed();
-        Http::assertSentCount(2);
+        Http::assertSentCount(3);
         $this->assertSame('error', OzonProductLink::sole()->status);
         $this->assertNotNull(OzonProductLink::sole()->create_attempted_at);
     }
@@ -229,6 +233,7 @@ class OzonExportTest extends TestCase
         $this->product();
         Http::fake([
             '*/v3/product/list' => Http::response(['result' => ['items' => [], 'total' => 0]]),
+            '*/v1/description-category/attribute' => Http::response(['result' => [['id' => 71001, 'name' => 'Аннотация']]]),
             '*/v3/product/import' => Http::response(['message' => 'secret-test-key'], 400),
         ]);
         $this->artisan('ozon:export-category --category=interior')->expectsOutputToContain('ozon_http_400')->assertFailed();
@@ -377,5 +382,77 @@ class OzonExportTest extends TestCase
     {
         $product = $this->product('TRAVERSAL', ['main_image' => '%2e%2e/private.jpg']);
         $this->assertSame([], app(OzonPayload::class)->images($product));
+    }
+
+    public function test_annotation_lookup_is_targeted_and_reused_only_for_same_mapping(): void
+    {
+        $this->fakeCreate();
+        $this->product('ONE');
+        $this->product('TWO');
+        $this->artisan('ozon:export-category --category=interior')->assertSuccessful();
+        Http::assertSentCount(5);
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/v1/description-category/attribute')
+            && $r->data() === ['description_category_id' => 123, 'type_id' => 456, 'language' => 'DEFAULT']);
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/v3/product/import') && $r['items'][0]['attributes'][0]['id'] === 71001);
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), '/tree') || str_contains($r->url(), '/attribute/values'));
+    }
+
+    public function test_missing_annotation_blocks_import_without_claim_or_guessed_id(): void
+    {
+        $this->product();
+        Http::fake([
+            '*/v3/product/list' => Http::response(['result' => ['items' => [], 'total' => 0]]),
+            '*/v1/description-category/attribute' => Http::response(['result' => [['id' => 9048, 'name' => 'Название модели']]]),
+        ]);
+        $this->artisan('ozon:export-category --category=interior')->expectsOutputToContain('ozon_annotation_missing')->assertFailed();
+        Http::assertSentCount(2);
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/v3/product/import'));
+        $this->assertSame(0, OzonProductLink::count());
+    }
+
+    public function test_annotation_cache_does_not_cross_category_type_pairs(): void
+    {
+        Http::fakeSequence()->push(['result' => [['id' => 71001, 'name' => 'Аннотация']]])
+            ->push(['result' => [['id' => 71002, 'name' => 'Описание товара']]]);
+        $client = app(OzonClient::class);
+        $this->assertSame(71001, $client->annotationId($this->mapping()));
+        $mapping = new OzonCategoryMapping(['ozon_description_category_id' => 321, 'ozon_type_id' => 654, 'enabled' => true]);
+        $this->assertSame(71002, $client->annotationId($mapping));
+        Http::assertSentCount(2);
+    }
+
+    public function test_payload_does_not_guess_annotation_or_missing_measurements(): void
+    {
+        $product = $this->product();
+        $item = app(OzonPayload::class)->create($product, $this->mapping(), 71001);
+        foreach (['depth', 'height', 'width', 'weight', 'tnved_code'] as $key) {
+            $this->assertArrayNotHasKey($key, $item);
+        }
+        $this->expectExceptionMessage('ozon_annotation_missing');
+        app(OzonPayload::class)->create($product, $this->mapping());
+    }
+
+    public function test_only_explicit_local_measurements_are_sent_without_regulatory_defaults(): void
+    {
+        $product = $this->product('MEASURED', ['attributes' => json_encode([
+            'weight_g' => 350, 'width_mm' => 150, 'height_mm' => 100, 'depth_mm' => 100,
+        ])]);
+        $item = app(OzonPayload::class)->create($product, $this->mapping(), 71001);
+        $this->assertSame(350, $item['weight']);
+        $this->assertSame('g', $item['weight_unit']);
+        $this->assertSame(150, $item['width']);
+        $this->assertSame('mm', $item['dimension_unit']);
+        $this->assertArrayNotHasKey('tnved_code', $item);
+    }
+
+    public function test_taxonomy_mirror_is_not_present_in_ozon_sources(): void
+    {
+        $files = [...glob(app_path('Services/Ozon/*.php')), ...glob(app_path('Console/Commands/Ozon*.php'))];
+        foreach ($files as $file) {
+            $source = file_get_contents($file);
+            foreach (['/description-category/tree', '/attribute/values', 'fetchAllCategories', 'syncCategoryTree', 'downloadTaxonomy', 'recursiveCategoryImport'] as $forbidden) {
+                $this->assertStringNotContainsString($forbidden, $source, $file);
+            }
+        }
     }
 }

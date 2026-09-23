@@ -22,7 +22,7 @@ class OzonExporter
 
             return 'existing';
         }
-        $item = $this->payload->create($product, $mapping);
+        $this->payload->validate($product);
         if (config('ozon.vat') === null || config('ozon.vat') === '') {
             throw new \RuntimeException('ozon_vat_missing: do not invent tax data');
         }
@@ -35,6 +35,8 @@ class OzonExporter
 
             return 'existing';
         }
+        $annotationId = $this->payload->description($product) !== '' ? $this->client->annotationId($mapping) : null;
+        $item = $this->payload->create($product, $mapping, $annotationId);
         // Unique constraints + committed claim BEFORE HTTP protect concurrent runs and crashes.
         $claimed = DB::table('ozon_product_links')->insertOrIgnore([
             'local_product_id' => $product->id, 'offer_id' => $product->sku,
@@ -47,7 +49,7 @@ class OzonExporter
         $link = OzonProductLink::where('local_product_id', $product->id)->firstOrFail();
         try {
             $result = $this->client->request('/v3/product/import', ['items' => [$item]]);
-            $taskId = $result['result']['task_id'] ?? null;
+            $taskId = $result['result']['task_id'] ?? $result['task_id'] ?? null;
             if (! is_numeric($taskId) || (int) $taskId <= 0) {
                 throw new \RuntimeException('ozon_import_task_missing: reconcile manually');
             }
