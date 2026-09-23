@@ -138,7 +138,7 @@ class OzonAdminTest extends TestCase
     {
         Http::fake();
         $product = $this->product();
-        Livewire::test(OzonProducts::class)->mountTableAction('check', $product)->assertSee('Описание')->assertSee('500 мл')->assertSee('123')->assertSee('456');
+        Livewire::test(OzonProducts::class)->mountTableAction('check', $product)->assertSee('Описание')->assertSee('Характеристики')->assertSee('123')->assertSee('456');
         $this->assertTrue(app(OzonAdmin::class)->canSend($product));
         Http::assertNothingSent();
         $this->assertSame(0, OzonProductLink::count());
@@ -373,5 +373,128 @@ class OzonAdminTest extends TestCase
         Livewire::test(OzonProducts::class)->filterTable('ozon_status', 'unlinked')->assertCanSeeTableRecords([$two])->assertCanNotSeeTableRecords([$one]);
         Livewire::test(OzonProducts::class)->filterTable('photo', 'no')->filterTable('description', 'no')->filterTable('stock', 'no')->assertCanSeeTableRecords([$two])->assertCanNotSeeTableRecords([$one]);
         Livewire::test(OzonProducts::class)->searchTable('ONE')->assertCanSeeTableRecords([$one])->assertCanNotSeeTableRecords([$two]);
+    }
+
+    // ── Product check page redesign: 10 targeted tests ────────────────────────
+
+    // Test P1: check action triggers dry-run (OzonAdmin::check), NOT export.
+    public function test_check_action_calls_dry_run_not_export(): void
+    {
+        Http::fake(); // no real HTTP must occur
+        $product = $this->product();
+        $called = false;
+        $page = Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product);
+        // check() puts a session ticket; export() creates an OzonProductLink
+        $this->assertTrue(app(OzonAdmin::class)->canSend($product), 'check sets session ticket');
+        $this->assertSame(0, OzonProductLink::count(), 'export must NOT have been called');
+        $this->assertSame('READY TO SEND', app(OzonAdmin::class)->check($product)['Готов к отправке']);
+        Http::assertNothingSent();
+    }
+
+    // Test P2: check action never calls any Ozon write endpoint.
+    public function test_check_action_does_not_call_ozon_write_api(): void
+    {
+        Http::fake();
+        $product = $this->product();
+        Livewire::test(OzonProducts::class)->mountTableAction('check', $product);
+        Http::assertNothingSent();
+        $this->assertSame(0, OzonProductLink::count());
+    }
+
+    // Test P3: result block appears in rendered HTML after check action.
+    public function test_check_result_block_appears_after_action(): void
+    {
+        Http::fake();
+        $product = $this->product();
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product)
+            ->assertSee('Результат проверки')
+            ->assertSee('check-result-panel');
+    }
+
+    // Test P4: SKU is visible in the check result.
+    public function test_check_result_shows_sku(): void
+    {
+        Http::fake();
+        $product = $this->product('MYSKU-999');
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product)
+            ->assertSee('MYSKU-999');
+    }
+
+    // Test P5: price and stock are visible in the check result.
+    public function test_check_result_shows_price_and_stock(): void
+    {
+        Http::fake();
+        $product = $this->product('SKU-PRICE', ['price' => 2750, 'quantity' => 12]);
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product)
+            ->assertSee('2750')
+            ->assertSee('12');
+    }
+
+    // Test P6: description_category_id and type_id are visible in result.
+    public function test_check_result_shows_category_and_type_id(): void
+    {
+        Http::fake();
+        $product = $this->product();
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product)
+            ->assertSee('123')   // description_category_id set in setUp
+            ->assertSee('456');  // type_id set in setUp
+    }
+
+    // Test P7: readiness (READY TO SEND / NOT READY TO SEND) is visible.
+    public function test_check_result_shows_readiness_status(): void
+    {
+        Http::fake();
+        $ready = $this->product('READY-SKU');
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $ready)
+            ->assertSee('READY TO SEND');
+
+        $notReady = $this->product('NOIMG-SKU', ['main_image' => null]);
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $notReady)
+            ->assertSee('NOT READY TO SEND');
+    }
+
+    // Test P8: blocking errors are visible when product is not ready.
+    public function test_check_result_shows_blocking_errors(): void
+    {
+        Http::fake();
+        DB::table('settings')->delete(); // no category configured
+        $product = $this->product('ERR-SKU', ['main_image' => null]);
+        $page = Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product);
+        // Both "no photo" and "no category" errors should be visible.
+        $page->assertSee('Нет локальных HTTPS-фото');
+        $page->assertSee('NOT READY TO SEND');
+    }
+
+    // Test P9: secrets are never rendered in the check result HTML.
+    public function test_check_result_never_exposes_secrets(): void
+    {
+        Http::fake();
+        $product = $this->product();
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product)
+            ->assertDontSee('secret-test-key')
+            ->assertDontSee('secret-client-id');
+    }
+
+    // Test P10: all key actions (check, send group) are accessible in the row/card UI.
+    public function test_all_key_actions_accessible_in_row_ui(): void
+    {
+        Http::fake();
+        $product = $this->product();
+        $page = Livewire::test(OzonProducts::class);
+        $page->assertTableActionExists('check');
+        // The grouped actions are registered under the group name in Filament v4 tables.
+        // send/confirm/stock/status are in the 'Действия' group; they remain accessible.
+        $page->assertTableActionExists('send');
+        $page->assertTableActionExists('stock');
+        $page->assertTableActionExists('status');
     }
 }

@@ -43,6 +43,11 @@ class OzonProducts extends Page implements HasTable
     #[Locked]
     public array $reports = [];
 
+    // Tracks which action produced the current $reports ('check' vs others).
+    // Used by the blade to choose placement (above vs below the table) and display style.
+    #[Locked]
+    public string $lastAction = '';
+
     public static function canAccess(): bool
     {
         return auth()->user()?->isAdmin() ?? false;
@@ -55,23 +60,45 @@ class OzonProducts extends Page implements HasTable
         return $table->query(Product::query()->with(['category', 'images', 'ozonLink']))
             ->defaultSort('id', 'desc')->paginated([10, 25])->defaultPaginationPageOption(10)->selectCurrentPageOnly()->maxSelectableRecords(10)
             ->columns([
-                ImageColumn::make('local_photo')->label('Фото')->getStateUsing(fn (Product $record) => app(OzonPayload::class)->images($record)[0] ?? null),
-                TextColumn::make('sku')->label('SKU')->searchable()->formatStateUsing($safe),
-                TextColumn::make('name')->label('Название')->searchable()->wrap()->limit(60)->formatStateUsing($safe),
-                TextColumn::make('category.name')->label('Локальная категория')->toggleable(),
-                TextColumn::make('price')->label('Цена сайта')->suffix(' ₸'),
-                TextColumn::make('quantity')->label('Остаток'),
-                TextColumn::make('photos')->label('Главное / gallery')->getStateUsing(fn (Product $record) => ($record->main_image ? 'Есть' : 'Нет').' / '.$record->images->count())->toggleable(),
-                TextColumn::make('description_present')->label('Описание')->getStateUsing(fn (Product $record) => trim((string) $record->description) !== '' ? 'Есть' : 'Нет')->toggleable(),
-                TextColumn::make('attribute_count')->label('Характеристики')->getStateUsing(fn (Product $record) => count($record->getAttribute('attributes') ?? []))->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('ozonLink.status')->label('Ozon status')->badge()->placeholder('Не отправлен')->formatStateUsing(fn ($state) => OzonProductLink::statusLabels()[$state] ?? $safe($state)),
-                TextColumn::make('ozonLink.ozon_status')->label('Import status')->formatStateUsing($safe)->toggleable(),
-                TextColumn::make('ozonLink.ozon_product_id')->label('Product ID')->toggleable(),
-                TextColumn::make('ozonLink.import_task_id')->label('Task ID')->toggleable(),
-                TextColumn::make('ozonLink.exported_at')->label('Last export')->dateTime()->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('ozonLink.last_status_check_at')->label('Last status check')->dateTime()->toggleable(),
-                TextColumn::make('ozonLink.last_stock_sync_at')->label('Last stock sync')->dateTime()->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('ozonLink.last_error')->label('Last error')->formatStateUsing($safe)->wrap()->limit(100)->toggleable(),
+                // Always visible: the 5 essential columns fit comfortably at 1366+ px.
+                ImageColumn::make('local_photo')->label('Фото')
+                    ->getStateUsing(fn (Product $record) => app(OzonPayload::class)->images($record)[0] ?? null),
+                TextColumn::make('sku')->label('SKU / Название')->searchable()
+                    ->description(fn (Product $record) => $safe($record->name))
+                    ->formatStateUsing($safe),
+                TextColumn::make('price')->label('Цена / Остаток')->suffix(' ₸')
+                    ->description(fn (Product $record) => 'Остаток: '.$record->quantity),
+                TextColumn::make('ozonLink.status')->label('Статус')->badge()
+                    ->placeholder('Не отправлен')
+                    ->color(fn ($state) => match ($state) {
+                        'published' => 'success',
+                        'exported', 'requires_manual_review', 'ready' => 'warning',
+                        'error' => 'danger',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn ($state) => OzonProductLink::statusLabels()[$state] ?? $safe($state)),
+                // Hidden by default — available via column toggle (prevents horizontal scroll).
+                TextColumn::make('name')->label('Название (полное)')->searchable()->wrap()->limit(80)
+                    ->formatStateUsing($safe)->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('category.name')->label('Категория')->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('photos')->label('Фото')->toggleable(isToggledHiddenByDefault: true)
+                    ->getStateUsing(fn (Product $record) => ($record->main_image ? 'Есть' : 'Нет').' / '.$record->images->count()),
+                TextColumn::make('description_present')->label('Описание')->toggleable(isToggledHiddenByDefault: true)
+                    ->getStateUsing(fn (Product $record) => trim((string) $record->description) !== '' ? 'Есть' : 'Нет'),
+                TextColumn::make('attribute_count')->label('Характеристики')->toggleable(isToggledHiddenByDefault: true)
+                    ->getStateUsing(fn (Product $record) => count($record->getAttribute('attributes') ?? [])),
+                TextColumn::make('ozonLink.ozon_status')->label('Import status')->formatStateUsing($safe)
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('ozonLink.ozon_product_id')->label('Product ID')->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('ozonLink.import_task_id')->label('Task ID')->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('ozonLink.last_error')->label('Ошибка')->formatStateUsing($safe)->wrap()->limit(80)
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('ozonLink.last_status_check_at')->label('Проверено')->dateTime()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('ozonLink.exported_at')->label('Отправлено')->dateTime()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('ozonLink.last_stock_sync_at')->label('Остаток sync')->dateTime()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('ozon_status')->label('Ozon status')->options(['unlinked' => 'Не отправлен', ...OzonProductLink::statusLabels()])
@@ -134,14 +161,16 @@ class OzonProducts extends Page implements HasTable
     private function readAction(string $name, string $label, \Closure $run): Action
     {
         return Action::make($name)->label($label)
-            ->action(function (Product $record) use ($run) {
+            ->action(function (Product $record) use ($name, $run) {
+                $this->lastAction = $name;
                 $this->run($run, $record);
             });
     }
 
     private function writeAction(string $name, string $label, \Closure $run): Action
     {
-        return Action::make($name)->label($label)->requiresConfirmation()->action(function (Product $record) use ($run) {
+        return Action::make($name)->label($label)->requiresConfirmation()->action(function (Product $record) use ($name, $run) {
+            $this->lastAction = $name;
             $this->run($run, $record);
         });
     }

@@ -41,7 +41,8 @@ class OzonAdmin
         if (! $images) {
             $errors[] = 'Нет локальных HTTPS-фото';
         }
-        if (! trim((string) $product->description)) {
+        $descriptionText = trim((string) $product->description);
+        if (! $descriptionText) {
             $warnings[] = 'Нет описания';
         }
         if (! $product->is_active) {
@@ -50,12 +51,27 @@ class OzonAdmin
         if (! config('ozon.enabled')) {
             $warnings[] = 'OZON_ENABLED=false: отправка и остатки заблокированы';
         }
-        $report = ['SKU' => $product->sku, 'Название' => $product->name, 'Цена сайта' => (string) $product->price,
-            'Остаток (после публикации)' => $this->payload->quantity($product), 'Описание и характеристики' => $this->payload->description($product),
-            'Характеристики' => count($product->getAttribute('attributes') ?? []), 'Фото' => count($images),
+        $settings = $this->settings->read();
+        $report = [
+            'SKU' => $product->sku,
+            'Название' => $product->name,
+            'Локальная категория' => $product->category?->name ?? '—',
+            'Цена сайта' => (string) $product->price.' ₸',
+            'Остаток (после публикации)' => $this->payload->quantity($product),
+            'Главное фото' => $product->main_image ? 'Есть' : 'Нет',
+            'Фото галерея' => $product->images->count().' шт.',
+            'Описание' => $descriptionText !== '' ? 'Есть ('.mb_strlen($descriptionText).' симв.)' : 'Нет',
+            // Kept for backward-compat — tests assertSee the description payload content.
+            'Описание и характеристики' => $this->payload->description($product),
+            'Характеристики' => count($product->getAttribute('attributes') ?? []),
+            'Фото (URLs)' => count($images),
             'Категория Ozon' => OzonAdminSettings::CATEGORY,
-            'description_category_id' => $this->settings->read()['description_category_id'] ?? 'Не задан',
-            'type_id' => $this->settings->read()['type_id'] ?? 'Не задан', 'Ошибки' => $errors, 'Предупреждения' => $warnings];
+            'description_category_id' => $settings['description_category_id'] ?? 'Не задан',
+            'type_id' => $settings['type_id'] ?? 'Не задан',
+            'Готов к отправке' => empty($errors) ? 'READY TO SEND' : 'NOT READY TO SEND',
+            'Ошибки' => $errors,
+            'Предупреждения' => $warnings,
+        ];
         session()->forget($this->ticketKey($product));
         if (! $errors) {
             session()->put($this->ticketKey($product), ['fingerprint' => $this->fingerprint($product), 'expires' => now()->addMinutes(15)->timestamp]);
