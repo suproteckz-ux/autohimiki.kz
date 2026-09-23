@@ -432,4 +432,48 @@ class OzonCategoryPickerTest extends TestCase
         Http::assertSentCount(1); // exactly one Ozon API call total
         $this->assertNull(session('ozon_category_pairs')); // nothing on disk
     }
+
+    // Test 20: OzonClient::categoryTypePairs() exists and parses a real direct-leaf fixture.
+    public function test_ozon_client_category_type_pairs_method_exists_and_parses_direct_leaf(): void
+    {
+        $this->assertTrue(
+            method_exists(\App\Services\Ozon\OzonClient::class, 'categoryTypePairs'),
+            'OzonClient::categoryTypePairs() must exist — deployed production class is missing the method'
+        );
+
+        Http::fake(['*/v1/description-category/tree' => Http::response([
+            'result' => [
+                [
+                    // Real Ozon direct-leaf format: type_id / type_name on the node itself.
+                    'description_category_id' => 200001176,
+                    'category_name' => 'Очистители салона',
+                    'type_id' => 97176,
+                    'type_name' => 'Очистители салона',
+                    'disabled' => false,
+                    'children' => [],
+                ],
+                [
+                    // Disabled node must be excluded.
+                    'description_category_id' => 200001177,
+                    'category_name' => 'Исключённая',
+                    'type_id' => 97177,
+                    'type_name' => 'Исключённый тип',
+                    'disabled' => true,
+                    'children' => [],
+                ],
+            ],
+        ])]);
+
+        $pairs = app(\App\Services\Ozon\OzonClient::class)->categoryTypePairs();
+
+        // Method returns flat key=>label map: ['catId|typeId' => 'catName — typeName']
+        $this->assertIsArray($pairs);
+        $this->assertArrayHasKey('200001176|97176', $pairs,
+            'Direct-leaf node must produce a pair keyed as description_category_id|type_id');
+        $this->assertSame('Очистители салона — Очистители салона', $pairs['200001176|97176']);
+        $this->assertArrayNotHasKey('200001177|97177', $pairs,
+            'Disabled node must be excluded from pairs');
+        // Nothing stored server-side.
+        $this->assertNull(session('ozon_category_pairs'));
+    }
 }

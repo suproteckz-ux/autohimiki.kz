@@ -144,6 +144,55 @@ class OzonClient
         return $data;
     }
 
+    public function categoryTypePairs(): array
+    {
+        $data = $this->categoryTree();
+        $pairs = [];
+        $this->walkForPairs($data['result'] ?? [], null, null, $pairs);
+        unset($data);
+        asort($pairs);
+
+        return $pairs;
+    }
+
+    private function walkForPairs(array $nodes, ?int $parentCatId, ?string $parentCatName, array &$pairs): void
+    {
+        foreach ($nodes as $node) {
+            if (! is_array($node) || ! empty($node['disabled'])) {
+                continue;
+            }
+            $typeId = (int) ($node['type_id'] ?? 0);
+            $nodeId = array_key_exists('description_category_id', $node) ? (int) $node['description_category_id'] : null;
+            $nodeName = array_key_exists('category_name', $node) ? (string) $node['category_name'] : null;
+
+            if ($typeId > 0) {
+                $catId = $nodeId ?? $parentCatId;
+                $catName = $nodeName ?? $parentCatName ?? '';
+                $typeName = (string) ($node['type_name'] ?? '');
+                if ($catId !== null && $catId > 0 && $typeName !== '') {
+                    $pairs["{$catId}|{$typeId}"] = $catName.' — '.$typeName;
+                }
+            } else {
+                // Also handle 'type' array format (alternative Ozon tree structure).
+                foreach (is_array($node['type'] ?? null) ? $node['type'] : [] as $type) {
+                    if (! is_array($type) || ! empty($type['disabled'])) {
+                        continue;
+                    }
+                    $tid = (int) ($type['type_id'] ?? 0);
+                    $tname = (string) ($type['type_name'] ?? '');
+                    $catId = $nodeId ?? $parentCatId;
+                    if ($catId !== null && $catId > 0 && $tid > 0 && $tname !== '') {
+                        $pairs["{$catId}|{$tid}"] = ($nodeName ?? $parentCatName ?? '').' — '.$tname;
+                    }
+                }
+                $children = is_array($node['children'] ?? null) ? $node['children'] : [];
+                if ($children !== []) {
+                    $this->walkForPairs($children, $nodeId ?? $parentCatId, $nodeName ?? $parentCatName, $pairs);
+                }
+            }
+        }
+    }
+
     public function safeDisplay(mixed $value): string
     {
         $text = is_scalar($value) ? (string) $value : '';
