@@ -117,8 +117,9 @@ class OzonCategoryPickerTest extends TestCase
         $this->assertCount(1, $options);
     }
 
-    // Test 5: type leaf наследует description_category_id родителя когда собственный = 0.
-    public function test_type_inherits_parent_description_category_id_when_own_is_zero(): void
+    // Test 5: type leaf наследует description_category_id родителя когда ключ отсутствует.
+    // walkForPairs() falls back via ?? only when the key is absent (null), not when value is 0.
+    public function test_type_inherits_parent_description_category_id_when_absent(): void
     {
         $this->fakeTree([
             [
@@ -127,7 +128,7 @@ class OzonCategoryPickerTest extends TestCase
                 'type' => [],
                 'children' => [
                     [
-                        'description_category_id' => 0,
+                        // no description_category_id key → null → inherits 100 from parent
                         'category_name' => 'Child',
                         'type' => [['type_id' => 300, 'type_name' => 'Child Type']],
                         'children' => [],
@@ -240,5 +241,84 @@ class OzonCategoryPickerTest extends TestCase
         $this->assertFalse(Schema::hasTable('ozon_taxonomy_categories'));
         $this->assertFalse(Schema::hasTable('ozon_category_tree'));
         $this->assertSame(0, DB::table('ozon_category_mappings')->count());
+    }
+
+    // Test 14: real Ozon direct leaf format — type_id/type_name on node, not in type array.
+    public function test_direct_leaf_format_produces_correct_options(): void
+    {
+        $this->fakeTree([
+            [
+                'description_category_id' => 17028752,
+                'category_name' => 'Автохимия и автокосметика',
+                'disabled' => false,
+                'type_id' => 0,
+                'children' => [
+                    [
+                        'description_category_id' => 200001176,
+                        'category_name' => 'Очистители салона',
+                        'type_id' => 97176,
+                        'type_name' => 'Очистители салона',
+                        'disabled' => false,
+                        'children' => [],
+                    ],
+                ],
+            ],
+        ]);
+        $options = Livewire::test(OzonDashboard::class)
+            ->call('loadCategoryOptions')
+            ->get('categoryTypeOptions');
+        $this->assertNotEmpty($options);
+        $this->assertArrayHasKey('200001176|97176', $options);
+        $this->assertSame('Очистители салона — Очистители салона', $options['200001176|97176']);
+        foreach (array_keys($options) as $key) {
+            $this->assertMatchesRegularExpression('/^\d+\|\d+$/', $key);
+        }
+    }
+
+    // Test 15: direct leaf inherits parent description_category_id when key absent.
+    public function test_direct_leaf_inherits_parent_id_when_absent(): void
+    {
+        $this->fakeTree([
+            [
+                'description_category_id' => 17028752,
+                'category_name' => 'Автохимия и автокосметика',
+                'disabled' => false,
+                'type_id' => 0,
+                'children' => [
+                    [
+                        // no description_category_id — inherits 17028752 from parent
+                        'type_id' => 97177,
+                        'type_name' => 'Другой тип',
+                        'disabled' => false,
+                        'children' => [],
+                    ],
+                ],
+            ],
+        ]);
+        $options = Livewire::test(OzonDashboard::class)
+            ->call('loadCategoryOptions')
+            ->get('categoryTypeOptions');
+        $this->assertArrayHasKey('17028752|97177', $options);
+        $this->assertStringContainsString('Автохимия и автокосметика', $options['17028752|97177']);
+    }
+
+    // Test 16: direct leaf — tree is not written to DB or settings.
+    public function test_direct_leaf_tree_not_stored_in_database(): void
+    {
+        $this->fakeTree([
+            [
+                'description_category_id' => 200001176,
+                'category_name' => 'Очистители салона',
+                'type_id' => 97176,
+                'type_name' => 'Очистители салона',
+                'disabled' => false,
+                'children' => [],
+            ],
+        ]);
+        Livewire::test(OzonDashboard::class)->call('loadCategoryOptions');
+        $settingsJson = DB::table('settings')->where('key', 'ozon_admin')->value('value') ?? '{}';
+        $this->assertStringNotContainsString('category_name', $settingsJson);
+        $this->assertStringNotContainsString('type_name', $settingsJson);
+        $this->assertStringNotContainsString('200001176', $settingsJson);
     }
 }

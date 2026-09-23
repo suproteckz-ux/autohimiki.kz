@@ -113,9 +113,7 @@ class OzonDashboard extends Page implements HasForms
     {
         app(OzonAdmin::class)->authorize();
         try {
-            $data = app(OzonClient::class)->categoryTree();
-            $tree = is_array($data['result'] ?? null) ? $data['result'] : [];
-            $this->categoryTypeOptions = $this->collectLeafPairs($tree, '', 0);
+            $this->categoryTypeOptions = app(OzonClient::class)->categoryTypePairs();
             if ($this->categoryTypeOptions === []) {
                 Notification::make()->title('Список категорий пуст')->warning()->send();
             } else {
@@ -130,38 +128,6 @@ class OzonDashboard extends Page implements HasForms
                 ->title('Не удалось загрузить категории Ozon. Можно ввести ID вручную.')
                 ->body($msg)->danger()->send();
         }
-    }
-
-    /** @param array<int,mixed> $nodes */
-    private function collectLeafPairs(array $nodes, string $parentName, int $parentId): array
-    {
-        $options = [];
-        foreach ($nodes as $node) {
-            if (! is_array($node)) {
-                continue;
-            }
-            $catId = (int) ($node['description_category_id'] ?? 0);
-            $catName = (string) ($node['category_name'] ?? '');
-            $types = is_array($node['type'] ?? null) ? $node['type'] : [];
-            $children = is_array($node['children'] ?? null) ? $node['children'] : [];
-            $effectiveCatId = $catId > 0 ? $catId : $parentId;
-            $effectiveCatName = $catName !== '' ? $catName : $parentName;
-            foreach ($types as $type) {
-                if (! is_array($type)) {
-                    continue;
-                }
-                $typeId = (int) ($type['type_id'] ?? 0);
-                $typeName = (string) ($type['type_name'] ?? '');
-                if ($typeId > 0 && $effectiveCatId > 0) {
-                    $options[$effectiveCatId.'|'.$typeId] = $effectiveCatName.' — '.$typeName;
-                }
-            }
-            if ($children !== []) {
-                $options = array_merge($options, $this->collectLeafPairs($children, $effectiveCatName, $effectiveCatId));
-            }
-        }
-
-        return $options;
     }
 
     public function saveCategory(): void
