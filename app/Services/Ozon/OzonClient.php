@@ -14,6 +14,8 @@ class OzonClient
 
     private const WAREHOUSE_ENDPOINT = '/v2/warehouse/list';
 
+    private const CATEGORY_TREE_ENDPOINT = '/v1/description-category/tree';
+
     // Deliberate allow-list: no category tree, price update or content re-import.
     private const PATHS = ['/v3/product/list', '/v3/product/import', '/v1/product/import/info', '/v2/products/stocks', '/v1/description-category/attribute'];
 
@@ -68,6 +70,40 @@ class OzonClient
             if (! is_array($item) || ! is_scalar($item['warehouse_id'] ?? null)) {
                 throw new \RuntimeException('invalid warehouse item (HTTP 200)');
             }
+        }
+
+        return $data;
+    }
+
+    public function categoryTree(): array
+    {
+        if (trim((string) config('ozon.client_id')) === '' || trim((string) config('ozon.api_key')) === '') {
+            throw new \RuntimeException('credentials missing');
+        }
+        try {
+            $response = Http::withHeaders(['Client-Id' => config('ozon.client_id'), 'Api-Key' => config('ozon.api_key')])
+                ->acceptJson()->connectTimeout(10)->timeout(config('ozon.timeout'))
+                ->withOptions(['allow_redirects' => false])
+                ->withBody('{"language":"DEFAULT"}', 'application/json')
+                ->post(self::BASE_URL.self::CATEGORY_TREE_ENDPOINT);
+        } catch (ConnectionException) {
+            throw new \RuntimeException('network error');
+        } catch (\Throwable) {
+            throw new \RuntimeException('network error');
+        }
+        $status = $response->status();
+        $data = $response->json();
+        $reason = match (true) {
+            $status === 401 => 'unauthorized',
+            $status === 403 => 'forbidden',
+            $status === 429 => 'rate limited',
+            $status >= 500 => 'API unavailable',
+            ! $response->successful() => 'API request rejected',
+            ! is_array($data) => 'invalid JSON response',
+            default => null,
+        };
+        if ($reason !== null) {
+            throw new \RuntimeException($reason.' (HTTP '.$status.')');
         }
 
         return $data;
