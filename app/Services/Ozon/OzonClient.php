@@ -33,10 +33,10 @@ class OzonClient
         ];
     }
 
-    public function testConnection(): string
+    public function testConnection(?callable $onHttpError = null): string
     {
         try {
-            $this->sellerInfo();
+            $this->sellerInfo($onHttpError);
 
             return 'OK';
         } catch (\RuntimeException $error) {
@@ -44,9 +44,9 @@ class OzonClient
         }
     }
 
-    public function sellerInfo(): array
+    public function sellerInfo(?callable $onHttpError = null): array
     {
-        $data = $this->diagnosticRead(self::SELLER_ENDPOINT);
+        $data = $this->diagnosticRead(self::SELLER_ENDPOINT, [], $onHttpError);
         if (empty($data['company']) && empty($data['result'])) {
             throw new \RuntimeException('invalid seller response (HTTP 200)');
         }
@@ -85,7 +85,7 @@ class OzonClient
         return mb_substr(preg_replace('/[\x00-\x1f\x7f]/', '', $text), 0, 500);
     }
 
-    private function diagnosticRead(string $path, array $payload = []): array
+    private function diagnosticRead(string $path, array $payload = [], ?callable $onHttpError = null): array
     {
         if (! in_array($path, [self::SELLER_ENDPOINT, self::WAREHOUSE_ENDPOINT], true)) {
             throw new \RuntimeException('read-only endpoint not allowed');
@@ -108,6 +108,9 @@ class OzonClient
             throw new \RuntimeException('network error');
         }
         $status = $response->status();
+        if ($onHttpError !== null && $response->failed()) {
+            $onHttpError((new OzonConnectionResponsePreview)->build($response));
+        }
         $data = $response->json();
         $businessError = is_array($data) ? ($data['message'] ?? $data['error'] ?? null) : null;
         $reason = match (true) {

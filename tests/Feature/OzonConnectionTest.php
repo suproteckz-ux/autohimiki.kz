@@ -41,9 +41,10 @@ class OzonConnectionTest extends TestCase
     {
         Http::fake(['https://api-seller.ozon.ru/v1/seller/info' => Http::response(['message' => 'connection-secret'], $status)]);
         $this->assertSame(1, Artisan::call('ozon:test-connection'));
-        $this->assertSame('Ozon connection: '.$message, trim(Artisan::output()));
+        $output = Artisan::output();
+        $this->assertSame('Ozon connection: '.$message, strtok(trim($output), "\n\r"));
         Http::assertSentCount(1);
-        $this->assertNoSecretOrLogs();
+        $this->assertNoSecretOrLogs($output);
     }
 
     public static function errors(): array
@@ -158,8 +159,98 @@ class OzonConnectionTest extends TestCase
             ->push(['result' => []], 200)->push('not-json connection-secret', 200);
         foreach (['obsolete method (HTTP 400)', 'invalid JSON object contract (HTTP 400)', 'invalid seller response (HTTP 200)', 'invalid JSON response (HTTP 200)'] as $expected) {
             $this->assertSame(1, Artisan::call('ozon:test-connection'));
-            $this->assertSame('Ozon connection: '.$expected, trim(Artisan::output()));
-            $this->assertNoSecretOrLogs();
+            $output = Artisan::output();
+            $this->assertSame('Ozon connection: '.$expected, strtok(trim($output), "\n\r"));
+            $this->assertNoSecretOrLogs($output);
         }
+    }
+
+    public function test_json_404_prints_only_safe_response_fields_and_selected_headers(): void
+    {
+        Http::fake(['*/v1/seller/info' => Http::response([
+            'error' => 'not_found', 'code' => 404, 'message' => 'Unknown route',
+            'details' => ['path' => '/v1/seller/info', 'headers' => ['Api-Key' => 'hidden-header'],
+                'credentials' => ['password' => 'hidden-password'], 'cookie' => 'hidden-cookie'],
+            'request' => ['Client-Id' => 'hidden-client'], 'unrelated' => 'hidden-other',
+        ], 404, ['Content-Type' => 'application/json', 'Server' => 'nginx', 'X-Request-ID' => 'request-123',
+            'X-Trace-ID' => 'trace-456', 'Set-Cookie' => 'session=hidden-cookie', 'Api-Key' => 'hidden-header'])]);
+        $this->assertSame(1, Artisan::call('ozon:test-connection'));
+        $output = Artisan::output();
+        foreach (['HTTP status: 404', 'Content-Type: application/json', 'Server: nginx', 'Request-ID: request-123', 'Trace-ID: trace-456', '"error":"not_found"', '"message":"Unknown route"', '/v1/seller/info'] as $expected) {
+            $this->assertStringContainsString($expected, $output);
+        }
+        foreach (['hidden-header', 'hidden-password', 'hidden-cookie', 'hidden-client', 'hidden-other', 'Set-Cookie', 'Api-Key', 'Client-Id'] as $secret) {
+            $this->assertStringNotContainsString($secret, $output);
+        }
+        $this->assertSafePreview($output);
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($r) => $r->url() === 'https://api-seller.ozon.ru/v1/seller/info' && $r->method() === 'POST' && $r->body() === '{}');
+    }
+
+    public function test_html_404_is_sanitized_and_preview_is_at_most_500_unicode_characters(): void
+    {
+        $html = '<html><head><title>Proxy 404</title><script>hidden-script</script></head><body>'
+            .'<h1>nginx route not found</h1><input value="hidden-form">'
+            .' connection-secret test-client '.rawurlencode('connection-secret').' '.base64_encode('connection-secret')
+            .' session-secret '.str_repeat('Ошибка ', 200).'</body></html>';
+        Http::fake(['*/v1/seller/info' => Http::response($html, 404, ['Content-Type' => 'text/html; charset=utf-8',
+            'Server' => 'proxy connection-secret', 'Request-ID' => "trace\tconnection-secret", 'Set-Cookie' => 'session=session-secret; HttpOnly'])]);
+        $this->assertSame(1, Artisan::call('ozon:test-connection'));
+        $output = Artisan::output();
+        $this->assertStringContainsString('Proxy 404', $output);
+        $this->assertStringContainsString('nginx route not found', $output);
+        foreach (['hidden-script', 'hidden-form', 'session-secret', 'test-client', base64_encode('connection-secret'), '<script>'] as $secret) {
+            $this->assertStringNotContainsString($secret, $output);
+        }
+        $preview = $this->assertSafePreview($output);
+        $this->assertSame(500, mb_strlen($preview));
+        Http::assertSentCount(1);
+        Http::assertNotSent(fn ($r) => $r->url() !== 'https://api-seller.ozon.ru/v1/seller/info');
+    }
+
+    public function test_json_preview_redacts_before_truncation_and_limits_combined_fields(): void
+    {
+        Http::fake(['*/v1/seller/info' => Http::response(['message' => str_repeat('я', 490).'connection-secret',
+            'details' => ['message' => 'Client-Id: test-client Cookie: unknown-cookie', 'token' => 'hidden-token']], 404)]);
+        $this->assertSame(1, Artisan::call('ozon:test-connection'));
+        $output = Artisan::output();
+        $preview = $this->assertSafePreview($output);
+        $this->assertSame(500, mb_strlen($preview));
+        $this->assertStringNotContainsString('connection-', $output);
+        $this->assertStringNotContainsString('hidden-token', $output);
+        $this->assertStringNotContainsString('unknown-cookie', $output);
+    }
+
+    public function test_echoed_headers_cookies_and_credentials_are_removed_from_html_text(): void
+    {
+        Http::fake(['*/v1/seller/info' => Http::response("<h1>404 proxy</h1>\nCookie: arbitrary-session\nAuthorization: Bearer bearer-secret\nApi-Key: another-key\nClient-Id: another-client\nRequest headers: X-Custom: custom-secret", 404, ['Content-Type' => 'text/html'])]);
+        $this->assertSame(1, Artisan::call('ozon:test-connection'));
+        $output = Artisan::output();
+        foreach (['arbitrary-session', 'bearer-secret', 'another-key', 'another-client', 'custom-secret'] as $secret) {
+            $this->assertStringNotContainsString($secret, $output);
+        }
+        $this->assertStringContainsString('404 proxy', $output);
+        $this->assertSafePreview($output);
+    }
+
+    public function test_seller_and_warehouse_commands_do_not_gain_response_previews(): void
+    {
+        Http::fake(['*' => Http::response(['message' => 'hidden-response'], 404)]);
+        foreach (['ozon:seller-info', 'ozon:warehouses'] as $command) {
+            $this->assertSame(1, Artisan::call($command));
+            $output = Artisan::output();
+            $this->assertStringNotContainsString('Response preview', $output);
+            $this->assertStringNotContainsString('hidden-response', $output);
+        }
+    }
+
+    private function assertSafePreview(string $output): string
+    {
+        $this->assertSame(1, preg_match('/^Response preview: (.*)$/m', str_replace("\r", '', $output), $match));
+        $this->assertLessThanOrEqual(500, mb_strlen($match[1]));
+        $this->assertStringNotContainsString('test-client', $output);
+        $this->assertNoSecretOrLogs($output);
+
+        return $match[1];
     }
 }
