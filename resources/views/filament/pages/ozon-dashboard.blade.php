@@ -24,6 +24,23 @@
             @include('filament.ozon.report', ['reports' => $warehouses])
         </div>
     </x-filament::section>
+    <x-filament::section heading="НДС для товаров Ozon">
+        <div class="space-y-3">
+            <p class="text-sm text-gray-600 dark:text-gray-400">
+                Единая ставка НДС для всех экспортируемых товаров. Передаётся в поле <code>vat</code> запроса <code>v3/product/import</code>.
+                Хранится в настройках; после сохранения применяется при следующей проверке и отправке.
+            </p>
+            @if(!empty($settings['vat']))
+                <p class="text-sm"><strong>Текущая ставка:</strong> {{ \App\Services\Ozon\OzonAdminSettings::VAT_RATES[$settings['vat']] ?? $settings['vat'] }}</p>
+            @else
+                <p class="text-sm font-semibold text-red-600 dark:text-red-400">Ставка НДС не настроена — dry-run покажет ошибку ozon_vat_missing.</p>
+            @endif
+            {{ $this->vatForm }}
+            <x-filament::button wire:click="saveVat" wire:loading.attr="disabled" wire:target="saveVat">
+                Сохранить НДС
+            </x-filament::button>
+        </div>
+    </x-filament::section>
     <x-filament::section heading="Общая категория Ozon">
         <div class="space-y-4">
             <p>Все товары (Очистители салона) отправляются в одну пару description_category_id / type_id. Выберите из дерева Ozon или введите ID вручную. Сохраняются только эти два поля.</p>

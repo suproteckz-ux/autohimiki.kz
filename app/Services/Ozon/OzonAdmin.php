@@ -16,6 +16,11 @@ class OzonAdmin
     public function authorize(): void
     {
         abort_unless(auth()->user()?->isAdmin(), 403);
+        // Settings-stored VAT overrides the .env fallback so it's available to all downstream
+        // code (OzonExporter, OzonPayload) that reads config('ozon.vat') directly.
+        if (($vat = $this->settings->vat()) !== null) {
+            config(['ozon.vat' => $vat]);
+        }
     }
 
     public function check(Product $product): array
@@ -52,6 +57,10 @@ class OzonAdmin
             $warnings[] = 'OZON_ENABLED=false: отправка и остатки заблокированы';
         }
         $settings = $this->settings->read();
+        $vatRaw = config('ozon.vat');
+        $vatDisplay = ($vatRaw !== null && $vatRaw !== '')
+            ? ((int) round((float) $vatRaw * 100)).'%'
+            : 'Не задан';
         $report = [
             'SKU' => $product->sku,
             'Название' => $product->name,
@@ -68,6 +77,7 @@ class OzonAdmin
             'Категория Ozon' => OzonAdminSettings::CATEGORY,
             'description_category_id' => $settings['description_category_id'] ?? 'Не задан',
             'type_id' => $settings['type_id'] ?? 'Не задан',
+            'НДС' => $vatDisplay,
             'Готов к отправке' => empty($errors) ? 'READY TO SEND' : 'NOT READY TO SEND',
             'Ошибки' => $errors,
             'Предупреждения' => $warnings,

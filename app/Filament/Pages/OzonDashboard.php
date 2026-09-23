@@ -35,6 +35,8 @@ class OzonDashboard extends Page implements HasForms
 
     public array $categoryFormState = [];
 
+    public array $vatFormState = [];
+
     // Always empty — pairs are dispatched to the browser, never stored in Livewire snapshot.
     #[Locked]
     public array $categoryTypeOptions = [];
@@ -66,11 +68,14 @@ class OzonDashboard extends Page implements HasForms
             'categoryId' => $catId,
             'typeId' => $typeId,
         ]);
+        $this->vatForm->fill([
+            'vat' => $settings['vat'] ?? '0.16',
+        ]);
     }
 
     protected function getForms(): array
     {
-        return ['categoryForm'];
+        return ['categoryForm', 'vatForm'];
     }
 
     public function categoryForm(Schema $form): Schema
@@ -155,6 +160,26 @@ class OzonDashboard extends Page implements HasForms
             app(OzonAdminSettings::class)->saveCategory($catId, $typeId);
         }
         Notification::make()->title('Общая категория сохранена')->success()->send();
+    }
+
+    public function vatForm(Schema $form): Schema
+    {
+        return $form->schema([
+            Select::make('vat')
+                ->label('Ставка НДС')
+                ->options(OzonAdminSettings::VAT_RATES)
+                ->default('0.16')
+                ->required(),
+        ])->statePath('vatFormState');
+    }
+
+    public function saveVat(): void
+    {
+        app(OzonAdmin::class)->authorize();
+        $vat = (string) ($this->vatFormState['vat'] ?? '');
+        app(OzonAdminSettings::class)->saveVat($vat);
+        config(['ozon.vat' => $vat]);
+        Notification::make()->title('Ставка НДС сохранена')->success()->send();
     }
 
     public function checkConnection(): void

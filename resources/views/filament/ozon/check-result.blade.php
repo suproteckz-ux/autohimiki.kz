@@ -61,6 +61,14 @@
         <div><span class="font-medium text-gray-700 dark:text-gray-300">Категория Ozon:</span>
             <span class="ml-1">{{ $safe($report['Категория Ozon'] ?? null) }}</span></div>
 
+        @php $vatOk = ($report['НДС'] ?? '') !== 'Не задан'; @endphp
+        <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">НДС:</span>
+            <span class="ml-1 {{ $vatOk ? 'text-green-700 dark:text-green-400' : 'font-semibold text-red-600 dark:text-red-400' }}">
+                {{ $safe($report['НДС'] ?? 'Не задан') }}
+            </span>
+        </div>
+
     </div>
 
     {{-- Blocking errors --}}

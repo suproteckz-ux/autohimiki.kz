@@ -497,4 +497,107 @@ class OzonAdminTest extends TestCase
         $page->assertTableActionExists('stock');
         $page->assertTableActionExists('status');
     }
+
+    // ── VAT setting + full-width page: 8 targeted tests ──────────────────────
+
+    // Test V1: VAT setting can be read after saving; defaults applied via authorize().
+    public function test_vat_setting_defaults_and_loads_correctly(): void
+    {
+        $settings = app(OzonAdminSettings::class);
+        $this->assertNull($settings->vat(), 'before save, vat is null');
+        $settings->saveVat('0.16');
+        $this->assertSame('0.16', $settings->vat());
+        // authorize() must copy the stored VAT to config so downstream code can read it.
+        config(['ozon.vat' => null]);
+        app(OzonAdmin::class)->authorize();
+        $this->assertSame('0.16', config('ozon.vat'));
+    }
+
+    // Test V2: VAT can be saved via the dashboard Livewire action.
+    public function test_vat_can_be_saved_via_dashboard(): void
+    {
+        Http::fake();
+        Livewire::test(OzonDashboard::class)
+            ->set('vatFormState.vat', '0.16')
+            ->call('saveVat')
+            ->assertHasNoErrors();
+        $this->assertSame('0.16', app(OzonAdminSettings::class)->vat());
+    }
+
+    // Test V3: dry-run report includes НДС field showing the configured rate.
+    public function test_dry_run_report_includes_vat(): void
+    {
+        Http::fake();
+        app(OzonAdminSettings::class)->saveVat('0.16');
+        $product = $this->product('VAT-SKU');
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product)
+            ->assertSee('16%')
+            ->assertSee('НДС');
+    }
+
+    // Test V4: ozon_vat_missing blocker disappears once VAT is configured in settings.
+    public function test_vat_missing_blocker_disappears_after_settings_save(): void
+    {
+        Http::fake();
+        // Remove config VAT to simulate missing env var.
+        config(['ozon.vat' => null]);
+        $product = $this->product('NOVATSKU');
+        $report = app(OzonAdmin::class)->check($product);
+        $this->assertSame('NOT READY TO SEND', $report['Готов к отправке']);
+        $errors = implode(' ', (array) ($report['Ошибки'] ?? []));
+        $this->assertStringContainsString('ozon_vat_missing', $errors);
+
+        // Now save VAT via settings and re-check.
+        app(OzonAdminSettings::class)->saveVat('0.16');
+        $report2 = app(OzonAdmin::class)->check($product);
+        $this->assertSame('READY TO SEND', $report2['Готов к отправке']);
+        $errors2 = implode(' ', (array) ($report2['Ошибки'] ?? []));
+        $this->assertStringNotContainsString('ozon_vat_missing', $errors2);
+    }
+
+    // Test V5: price in the product is not modified when VAT is configured.
+    public function test_price_unchanged_by_vat_configuration(): void
+    {
+        Http::fake();
+        $product = $this->product('PRICE-CHK', ['price' => 3500]);
+        app(OzonAdminSettings::class)->saveVat('0.16');
+        $report = app(OzonAdmin::class)->check($product);
+        // Price must still be the original value, not vat-adjusted.
+        $this->assertStringContainsString('3500', $report['Цена сайта']);
+        $this->assertSame(3500, (int) $product->fresh()->price);
+    }
+
+    // Test V6: OzonProducts page renders with full-width CSS class.
+    public function test_ozon_products_page_uses_full_width(): void
+    {
+        Http::fake();
+        $this->get('/admin/ozon-products')
+            ->assertOk()
+            ->assertSee('fi-width-full');
+    }
+
+    // Test V7: action controls (check, send group) remain accessible after full-width change.
+    public function test_action_controls_accessible_after_full_width_change(): void
+    {
+        Http::fake();
+        $product = $this->product();
+        Livewire::test(OzonProducts::class)
+            ->assertTableActionExists('check')
+            ->assertTableActionExists('send')
+            ->assertTableActionExists('stock')
+            ->assertTableActionExists('status');
+    }
+
+    // Test V8: secrets (api_key, client_id) are not rendered in the check result.
+    public function test_secrets_not_in_check_result_after_vat_add(): void
+    {
+        Http::fake();
+        app(OzonAdminSettings::class)->saveVat('0.16');
+        $product = $this->product();
+        Livewire::test(OzonProducts::class)
+            ->mountTableAction('check', $product)
+            ->assertDontSee('secret-test-key')
+            ->assertDontSee('secret-client-id');
+    }
 }

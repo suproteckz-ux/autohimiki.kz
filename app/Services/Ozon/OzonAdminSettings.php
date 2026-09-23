@@ -9,6 +9,28 @@ class OzonAdminSettings
 {
     public const CATEGORY = 'Очистители салона';
 
+    // Valid values mirror what the Ozon v3/product/import API accepts for the `vat` field
+    // (decimal string: '0' = 0%, '0.1' = 10%, '0.16' = 16%, '0.2' = 20%).
+    public const VAT_RATES = [
+        '0'    => '0%',
+        '0.1'  => '10%',
+        '0.16' => '16% (Казахстан)',
+        '0.2'  => '20%',
+    ];
+
+    public function vat(): ?string
+    {
+        return $this->read()['vat'] ?? null;
+    }
+
+    public function saveVat(string $vat): void
+    {
+        if (! array_key_exists($vat, self::VAT_RATES)) {
+            throw new \RuntimeException('ozon_vat_invalid');
+        }
+        $this->merge(['vat' => $vat]);
+    }
+
     public function read(): array
     {
         return json_decode(Setting::where('key', 'ozon_admin')->value('value') ?? '{}', true) ?: [];
