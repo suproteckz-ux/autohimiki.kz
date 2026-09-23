@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
 class OzonAdminTest extends TestCase
@@ -24,8 +25,13 @@ class OzonAdminTest extends TestCase
     {
         parent::setUp();
         Schema::create('users', function (Blueprint $table) {
-            $table->id(); $table->string('name'); $table->string('email')->unique();
-            $table->string('password'); $table->string('role'); $table->rememberToken(); $table->timestamps();
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->string('role');
+            $table->rememberToken();
+            $table->timestamps();
         });
         foreach (['2025_01_001_create_categories_table.php', '2025_01_002_create_brands_table.php',
             '2025_01_003_create_products_table.php', '2025_01_004_create_product_images_table.php',
@@ -47,6 +53,7 @@ class OzonAdminTest extends TestCase
         $id = DB::table('products')->insertGetId(array_merge(['category_id' => 1, 'sku' => $sku, 'slug' => $sku,
             'name' => 'Очиститель '.$sku, 'price' => 1500, 'quantity' => 7, 'is_active' => true,
             'description' => 'Описание', 'attributes' => json_encode(['Объём' => '500 мл']), 'main_image' => 'catalog/main.jpg'], $extra));
+
         return Product::findOrFail($id);
     }
 
@@ -68,9 +75,11 @@ class OzonAdminTest extends TestCase
     public function test_admin_pages_display_settings_and_all_local_categories_without_http_or_secrets(): void
     {
         Http::fake();
-        $one = $this->product(); $two = $this->product('OTHER', ['category_id' => 2]);
+        $one = $this->product();
+        $two = $this->product('OTHER', ['category_id' => 2]);
         $this->get('/admin/ozon-dashboard')->assertOk()->assertSee('NetBazar')->assertSee('Муратбаева 138')
-            ->assertSee('1020005000312240')->assertSee('Очистители салона')->assertDontSee('secret-test-key')->assertDontSee('secret-client-id');
+            ->assertSee('1020005000312240')->assertSee('Очистители салона')->assertSee('Загрузить список из Ozon')
+            ->assertSee('Выбрать из Ozon')->assertDontSee('secret-test-key')->assertDontSee('secret-client-id');
         Livewire::test(OzonProducts::class)->assertCanSeeTableRecords([$one, $two])->assertTableActionExists('check')
             ->assertTableBulkActionExists('selected_status')->assertTableBulkActionDoesNotExist('selected_send');
         Http::assertNothingSent();
@@ -81,7 +90,7 @@ class OzonAdminTest extends TestCase
         auth()->user()->update(['role' => 'manager']);
         $this->get('/admin/ozon-dashboard')->assertForbidden();
         $this->get('/admin/ozon-products')->assertForbidden();
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(HttpException::class);
         app(OzonAdmin::class)->check($this->product());
     }
 
@@ -95,7 +104,8 @@ class OzonAdminTest extends TestCase
         $this->assertStringNotContainsString('secret-test-key', DB::table('settings')->value('value'));
         Http::assertSentCount(1);
         Http::assertSent(fn ($r) => $r->method() === 'POST' && $r->body() === '{}' && str_ends_with($r->url(), '/v1/seller/info'));
-        Log::shouldNotHaveReceived('error'); Log::shouldNotHaveReceived('info');
+        Log::shouldNotHaveReceived('error');
+        Log::shouldNotHaveReceived('info');
     }
 
     public function test_warehouse_check_reads_only_one_page_and_does_not_change_configuration(): void
@@ -108,15 +118,26 @@ class OzonAdminTest extends TestCase
 
     public function test_fixed_category_is_saved_once_without_local_mapping(): void
     {
-        Livewire::test(OzonDashboard::class)->set('categoryId', '999')->set('typeId', '777')->call('saveCategory')->assertHasNoErrors();
+        Livewire::test(OzonDashboard::class)
+            ->set('categoryFormState.taxonomyMode', 'manual')
+            ->set('categoryFormState.categoryId', '999')
+            ->set('categoryFormState.typeId', '777')
+            ->call('saveCategory')
+            ->assertHasNoErrors();
         $this->assertSame(999, app(OzonAdminSettings::class)->mapping()->ozon_description_category_id);
         $this->assertSame(0, DB::table('ozon_category_mappings')->count());
-        Livewire::test(OzonDashboard::class)->set('categoryId', '0')->call('saveCategory')->assertHasErrors('categoryId');
+        Livewire::test(OzonDashboard::class)
+            ->set('categoryFormState.taxonomyMode', 'manual')
+            ->set('categoryFormState.categoryId', '0')
+            ->set('categoryFormState.typeId', '1')
+            ->call('saveCategory')
+            ->assertHasErrors('categoryFormState.categoryId');
     }
 
     public function test_dry_run_modal_uses_local_payload_data_and_sends_nothing(): void
     {
-        Http::fake(); $product = $this->product();
+        Http::fake();
+        $product = $this->product();
         Livewire::test(OzonProducts::class)->mountTableAction('check', $product)->assertSee('Описание')->assertSee('500 мл')->assertSee('123')->assertSee('456');
         $this->assertTrue(app(OzonAdmin::class)->canSend($product));
         Http::assertNothingSent();
@@ -126,22 +147,35 @@ class OzonAdminTest extends TestCase
     public function test_send_without_dry_run_is_rejected(): void
     {
         Http::fake();
-        try { app(OzonAdmin::class)->send($this->product()); $this->fail('Expected check gate'); }
-        catch (\RuntimeException $e) { $this->assertStringContainsString('ozon_check_required', $e->getMessage()); }
+        try {
+            app(OzonAdmin::class)->send($this->product());
+            $this->fail('Expected check gate');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('ozon_check_required', $e->getMessage());
+        }
         Http::assertNothingSent();
     }
 
     public function test_changed_product_or_category_invalidates_dry_run(): void
     {
-        Http::fake(); $product = $this->product();
+        Http::fake();
+        $product = $this->product();
         app(OzonAdmin::class)->check($product);
         DB::table('products')->where('id', $product->id)->update(['price' => 2000]);
-        try { app(OzonAdmin::class)->send($product); $this->fail(); }
-        catch (\RuntimeException $e) { $this->assertStringContainsString('ozon_check_required', $e->getMessage()); }
+        try {
+            app(OzonAdmin::class)->send($product);
+            $this->fail();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('ozon_check_required', $e->getMessage());
+        }
         app(OzonAdmin::class)->check($product);
         app(OzonAdminSettings::class)->saveCategory(555, 666);
-        try { app(OzonAdmin::class)->send($product); $this->fail(); }
-        catch (\RuntimeException $e) { $this->assertStringContainsString('ozon_check_required', $e->getMessage()); }
+        try {
+            app(OzonAdmin::class)->send($product);
+            $this->fail();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('ozon_check_required', $e->getMessage());
+        }
         Http::assertNothingSent();
     }
 
@@ -156,7 +190,8 @@ class OzonAdminTest extends TestCase
 
     public function test_single_confirmed_action_uses_global_pair_and_saves_task_without_publishing(): void
     {
-        $this->fakeImport(); $product = $this->product('OTHER', ['category_id' => 2]);
+        $this->fakeImport();
+        $product = $this->product('OTHER', ['category_id' => 2]);
         $page = Livewire::test(OzonProducts::class)->mountTableAction('check', $product)->unmountTableAction();
         $page->mountTableAction('send', $product);
         Http::assertNothingSent();
@@ -173,8 +208,11 @@ class OzonAdminTest extends TestCase
     public function test_existing_remote_product_does_not_receive_price_or_import(): void
     {
         Http::fake(['*/v3/product/list' => Http::response(['result' => ['items' => [['offer_id' => 'SKU-001', 'product_id' => 999]], 'total' => 1]])]);
-        $product = $this->product(); app(OzonAdmin::class)->check($product); app(OzonAdmin::class)->send($product);
-        Http::assertSentCount(1); $this->assertSame(999, (int) $product->ozonLink()->first()->ozon_product_id);
+        $product = $this->product();
+        app(OzonAdmin::class)->check($product);
+        app(OzonAdmin::class)->send($product);
+        Http::assertSentCount(1);
+        $this->assertSame(999, (int) $product->ozonLink()->first()->ozon_product_id);
         $report = app(OzonAdmin::class)->check($product);
         $this->assertNotEmpty($report['Ошибки']);
         $this->assertFalse(app(OzonAdmin::class)->canSend($product->fresh()));
@@ -182,54 +220,71 @@ class OzonAdminTest extends TestCase
 
     public function test_disabled_integration_cannot_write_after_successful_check(): void
     {
-        Http::fake(); $product = $this->product(); app(OzonAdmin::class)->check($product);
+        Http::fake();
+        $product = $this->product();
+        app(OzonAdmin::class)->check($product);
         config(['ozon.enabled' => false]);
         $this->assertFalse(app(OzonAdmin::class)->canSend($product));
-        try { app(OzonAdmin::class)->send($product); $this->fail(); }
-        catch (\RuntimeException $e) { $this->assertStringContainsString('ozon_disabled', $e->getMessage()); }
+        try {
+            app(OzonAdmin::class)->send($product);
+            $this->fail();
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('ozon_disabled', $e->getMessage());
+        }
         Http::assertNothingSent();
     }
 
     public function test_status_modal_saves_product_id_and_remote_status_but_not_publication(): void
     {
-        $product = $this->product(); $link = $this->link($product, ['ozon_product_id' => null, 'status' => 'exported']);
+        $product = $this->product();
+        $link = $this->link($product, ['ozon_product_id' => null, 'status' => 'exported']);
         Http::fake(['*/v1/product/import/info' => Http::response(['result' => ['items' => [['offer_id' => $product->sku, 'product_id' => 777, 'status' => 'imported', 'errors' => []]]]])]);
         Livewire::test(OzonProducts::class)->mountTableAction('status', $product)->assertSee('777')->assertSee('imported');
-        $link->refresh(); $this->assertSame(777, (int) $link->ozon_product_id);
+        $link->refresh();
+        $this->assertSame(777, (int) $link->ozon_product_id);
         $this->assertSame('requires_manual_review', $link->status);
-        $this->assertNotNull($link->last_status_check_at); $this->assertNull($link->publication_confirmed_at);
+        $this->assertNotNull($link->last_status_check_at);
+        $this->assertNull($link->publication_confirmed_at);
         Http::assertSentCount(1);
         Http::assertSent(fn ($r) => $r['task_id'] === 987);
     }
 
     public function test_remote_errors_are_sanitized_displayed_and_not_logged(): void
     {
-        $product = $this->product(); $link = $this->link($product);
+        $product = $this->product();
+        $link = $this->link($product);
         Log::spy();
         Http::fake(['*/v1/product/import/info' => Http::response(['result' => ['items' => [['offer_id' => $product->sku, 'status' => 'failed',
             'errors' => [['code' => 'INVALID_ATTRIBUTE', 'message' => 'Missing required attribute secret-test-key secret-client-id', 'request_headers' => ['Api-Key' => 'secret-test-key'], 'cookie' => 'hidden-cookie']]]]]])]);
         Livewire::test(OzonProducts::class)->mountTableAction('status', $product)->assertSee('Missing required attribute')
             ->assertDontSee('secret-test-key')->assertDontSee('secret-client-id')->assertDontSee('hidden-cookie')->assertDontSee('request_headers');
-        $link->refresh(); $this->assertSame('error', $link->status);
+        $link->refresh();
+        $this->assertSame('error', $link->status);
         $this->assertStringNotContainsString('secret-test-key', json_encode($link->getAttributes()));
-        Log::shouldNotHaveReceived('error'); Log::shouldNotHaveReceived('info');
+        Log::shouldNotHaveReceived('error');
+        Log::shouldNotHaveReceived('info');
     }
 
     public function test_processing_is_not_a_created_or_published_card(): void
     {
-        $product = $this->product(); $link = $this->link($product, ['ozon_product_id' => null]);
+        $product = $this->product();
+        $link = $this->link($product, ['ozon_product_id' => null]);
         Http::fake(['*/v1/product/import/info' => Http::response(['result' => ['items' => [['offer_id' => $product->sku, 'status' => 'processing']]]])]);
         app(OzonAdmin::class)->status($product, true);
-        $this->assertSame('processing', $link->fresh()->status); $this->assertNull($link->fresh()->ozon_product_id);
+        $this->assertSame('processing', $link->fresh()->status);
+        $this->assertNull($link->fresh()->ozon_product_id);
     }
 
     public function test_confirm_requires_explicit_ui_confirmation_and_enables_stock(): void
     {
-        Http::fake(); $product = $this->product(); $link = $this->link($product);
+        Http::fake();
+        $product = $this->product();
+        $link = $this->link($product);
         $page = Livewire::test(OzonProducts::class)->mountTableAction('confirm', $product);
         $this->assertNull($link->fresh()->publication_confirmed_at);
         $page->callMountedTableAction();
-        $this->assertSame('published', $link->fresh()->status); $this->assertNotNull($link->fresh()->publication_confirmed_at);
+        $this->assertSame('published', $link->fresh()->status);
+        $this->assertNotNull($link->fresh()->publication_confirmed_at);
         Http::assertNothingSent();
     }
 
@@ -251,7 +306,9 @@ class OzonAdminTest extends TestCase
         Http::fake();
         foreach (['unlinked', 'exported', 'requires_manual_review', 'error', 'published'] as $status) {
             $product = $this->product($status);
-            if ($status !== 'unlinked') { $this->link($product, ['status' => $status, 'publication_confirmed_at' => null]); }
+            if ($status !== 'unlinked') {
+                $this->link($product, ['status' => $status, 'publication_confirmed_at' => null]);
+            }
             $reports = app(OzonAdmin::class)->selected([$product->id], 'stock');
             $this->assertArrayHasKey('Ошибка', $reports[0]);
         }
@@ -260,29 +317,40 @@ class OzonAdminTest extends TestCase
 
     public function test_bulk_status_targets_selected_task_only_without_catalog_or_tree(): void
     {
-        $one = $this->product('ONE'); $two = $this->product('TWO');
-        $this->link($one, ['import_task_id' => 101]); $other = $this->link($two, ['import_task_id' => 202]);
+        $one = $this->product('ONE');
+        $two = $this->product('TWO');
+        $this->link($one, ['import_task_id' => 101]);
+        $other = $this->link($two, ['import_task_id' => 202]);
         Http::fake(['*/v1/product/import/info' => Http::response(['result' => ['items' => [['offer_id' => 'ONE', 'status' => 'imported', 'product_id' => 500]]]])]);
         Livewire::test(OzonProducts::class)->callTableBulkAction('selected_status', [$one])->assertHasNoErrors();
-        Http::assertSentCount(1); Http::assertSent(fn ($r) => $r['task_id'] === 101);
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($r) => $r['task_id'] === 101);
         $this->assertNull($other->fresh()->last_status_check_at);
     }
 
     public function test_bulk_stock_targets_selected_published_only(): void
     {
-        $one = $this->product('ONE'); $two = $this->product('TWO'); $three = $this->product('THREE');
+        $one = $this->product('ONE');
+        $two = $this->product('TWO');
+        $three = $this->product('THREE');
         $this->link($one, ['status' => 'published', 'publication_confirmed_at' => now()]);
-        $this->link($two); $this->link($three, ['status' => 'published', 'publication_confirmed_at' => now()]);
+        $this->link($two);
+        $this->link($three, ['status' => 'published', 'publication_confirmed_at' => now()]);
         Http::fake(['*/v2/products/stocks' => Http::response(['result' => [['offer_id' => 'ONE', 'updated' => true]]])]);
         app(OzonAdmin::class)->selected([$one->id, $two->id], 'stock');
-        Http::assertSentCount(1); Http::assertSent(fn ($r) => $r['stocks'][0]['offer_id'] === 'ONE');
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($r) => $r['stocks'][0]['offer_id'] === 'ONE');
     }
 
     public function test_bulk_limit_is_checked_before_any_request(): void
     {
         Http::fake();
-        try { app(OzonAdmin::class)->selected(range(1, 11), 'status'); $this->fail(); }
-        catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) { $this->assertSame(422, $e->getStatusCode()); }
+        try {
+            app(OzonAdmin::class)->selected(range(1, 11), 'status');
+            $this->fail();
+        } catch (HttpException $e) {
+            $this->assertSame(422, $e->getStatusCode());
+        }
         Http::assertNothingSent();
     }
 
@@ -299,7 +367,8 @@ class OzonAdminTest extends TestCase
 
     public function test_search_and_filters_include_unlinked_and_stock_states(): void
     {
-        $one = $this->product('ONE'); $two = $this->product('TWO', ['quantity' => 0, 'main_image' => null, 'description' => null]);
+        $one = $this->product('ONE');
+        $two = $this->product('TWO', ['quantity' => 0, 'main_image' => null, 'description' => null]);
         $this->link($one);
         Livewire::test(OzonProducts::class)->filterTable('ozon_status', 'unlinked')->assertCanSeeTableRecords([$two])->assertCanNotSeeTableRecords([$one]);
         Livewire::test(OzonProducts::class)->filterTable('photo', 'no')->filterTable('description', 'no')->filterTable('stock', 'no')->assertCanSeeTableRecords([$two])->assertCanNotSeeTableRecords([$one]);

@@ -24,19 +24,24 @@
             @include('filament.ozon.report', ['reports' => $warehouses])
         </div>
     </x-filament::section>
-    <x-filament::section heading="Общая категория — Очистители салона">
-        <form wire:submit="saveCategory" class="space-y-4">
-            <p>Все выбранные товары из любых локальных категорий используют эту пару. Укажите подтверждённые ID категории и типа; без них отправка невозможна.</p>
-            <label class="block">description_category_id
-                <x-filament::input.wrapper><x-filament::input type="text" inputmode="numeric" wire:model="categoryId" /></x-filament::input.wrapper>
-            </label>
-            @error('categoryId') <p class="text-danger-600">{{ $message }}</p> @enderror
-            <label class="block">type_id
-                <x-filament::input.wrapper><x-filament::input type="text" inputmode="numeric" wire:model="typeId" /></x-filament::input.wrapper>
-            </label>
-            @error('typeId') <p class="text-danger-600">{{ $message }}</p> @enderror
-            <x-filament::button type="submit" wire:loading.attr="disabled">Сохранить категорию</x-filament::button>
-        </form>
+    <x-filament::section heading="Общая категория Ozon">
+        <div class="space-y-4">
+            <p>Все товары (Очистители салона) отправляются в одну пару description_category_id / type_id. Выберите из дерева Ozon или введите ID вручную. Сохраняются только эти два поля.</p>
+            <p><strong>Категория Ozon:</strong> {{ \App\Services\Ozon\OzonAdminSettings::CATEGORY }}</p>
+            @if(!empty($settings['description_category_id']))
+                <p><strong>Текущая:</strong> category_id={{ $settings['description_category_id'] }} / type_id={{ $settings['type_id'] ?? '?' }}</p>
+            @endif
+            <div class="flex items-center gap-3">
+                <x-filament::button color="gray" wire:click="loadCategoryOptions" wire:loading.attr="disabled" wire:target="loadCategoryOptions">
+                    Загрузить список из Ozon
+                </x-filament::button>
+                <span wire:loading wire:target="loadCategoryOptions" class="text-sm text-gray-500">Загрузка категорий и типов Ozon…</span>
+            </div>
+            {{ $this->categoryForm }}
+            <x-filament::button wire:click="saveCategory" wire:loading.attr="disabled" wire:target="saveCategory">
+                Сохранить категорию
+            </x-filament::button>
+        </div>
     </x-filament::section>
     <x-filament::button tag="a" :href="\App\Filament\Pages\OzonProducts::getUrl()">Перейти к товарам</x-filament::button>
 </x-filament-panels::page>

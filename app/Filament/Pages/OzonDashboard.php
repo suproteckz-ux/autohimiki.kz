@@ -6,23 +6,40 @@ use App\Services\Ozon\OzonAdmin;
 use App\Services\Ozon\OzonAdminSettings;
 use App\Services\Ozon\OzonClient;
 use App\Services\Ozon\OzonConnectionResponsePreview;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Concerns\InteractsWithForms;
+use Filament\Forms\Contracts\HasForms;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Schema;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Livewire\Attributes\Locked;
 
-class OzonDashboard extends Page
+class OzonDashboard extends Page implements HasForms
 {
+    use InteractsWithForms;
+
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-link';
+
     protected static string|\UnitEnum|null $navigationGroup = 'Ozon';
+
     protected static ?string $navigationLabel = 'Подключение и настройки';
+
     protected static ?string $title = 'Ozon — подключение и настройки';
+
     protected static ?int $navigationSort = 1;
+
     protected string $view = 'filament.pages.ozon-dashboard';
 
-    public string $categoryId = '';
-    public string $typeId = '';
+    public array $categoryFormState = [];
+
+    #[Locked]
+    public array $categoryTypeOptions = [];
+
     #[Locked]
     public array $warehouses = [];
+
     #[Locked]
     public string $warehouseMessage = '';
 
@@ -35,15 +52,142 @@ class OzonDashboard extends Page
     {
         app(OzonAdmin::class)->authorize();
         $settings = app(OzonAdminSettings::class)->read();
-        $this->categoryId = (string) ($settings['description_category_id'] ?? '');
-        $this->typeId = (string) ($settings['type_id'] ?? '');
+        $catId = (string) ($settings['description_category_id'] ?? '');
+        $typeId = (string) ($settings['type_id'] ?? '');
+
+        $this->categoryForm->fill([
+            'taxonomyMode' => 'taxonomy',
+            'categoryTypeKey' => ($catId && $typeId) ? "{$catId}|{$typeId}" : '',
+            'categoryId' => $catId,
+            'typeId' => $typeId,
+        ]);
+    }
+
+    protected function getForms(): array
+    {
+        return ['categoryForm'];
+    }
+
+    public function categoryForm(Schema $form): Schema
+    {
+        return $form->schema([
+            Select::make('taxonomyMode')
+                ->label('Режим category/type')
+                ->options(['taxonomy' => 'Выбрать из Ozon', 'manual' => 'Ввести вручную'])
+                ->default('taxonomy')
+                ->live()
+                ->required(),
+            Select::make('categoryTypeKey')
+                ->label('Категория и тип Ozon')
+                ->options(fn () => $this->categoryTypeOptions)
+                ->searchable()
+                ->getOptionLabelUsing(function (string $value): string {
+                    if (isset($this->categoryTypeOptions[$value])) {
+                        return $this->categoryTypeOptions[$value];
+                    }
+                    $parts = explode('|', $value, 2);
+
+                    return count($parts) === 2 ? "ID {$parts[0]} / Тип {$parts[1]}" : $value;
+                })
+                ->helperText(fn () => $this->categoryTypeOptions === []
+                    ? 'Нажмите «Загрузить список из Ozon» для получения актуального списка пар категория/тип.'
+                    : count($this->categoryTypeOptions).' пар загружено.')
+                ->visible(fn (Get $get) => ($get('taxonomyMode') ?? 'taxonomy') === 'taxonomy')
+                ->required(fn (Get $get) => ($get('taxonomyMode') ?? 'taxonomy') === 'taxonomy'),
+            TextInput::make('categoryId')
+                ->label('description_category_id')
+                ->numeric()
+                ->nullable()
+                ->visible(fn (Get $get) => $get('taxonomyMode') === 'manual')
+                ->required(fn (Get $get) => $get('taxonomyMode') === 'manual'),
+            TextInput::make('typeId')
+                ->label('type_id')
+                ->numeric()
+                ->nullable()
+                ->visible(fn (Get $get) => $get('taxonomyMode') === 'manual')
+                ->required(fn (Get $get) => $get('taxonomyMode') === 'manual'),
+        ])->statePath('categoryFormState');
+    }
+
+    public function loadCategoryOptions(): void
+    {
+        app(OzonAdmin::class)->authorize();
+        try {
+            $data = app(OzonClient::class)->categoryTree();
+            $tree = is_array($data['result'] ?? null) ? $data['result'] : [];
+            $this->categoryTypeOptions = $this->collectLeafPairs($tree, '', 0);
+            if ($this->categoryTypeOptions === []) {
+                Notification::make()->title('Список категорий пуст')->warning()->send();
+            } else {
+                Notification::make()->title('Загружено '.count($this->categoryTypeOptions).' пар категория/тип')->success()->send();
+            }
+        } catch (\Throwable $e) {
+            $this->categoryTypeOptions = [];
+            $msg = $e instanceof \RuntimeException
+                ? app(OzonConnectionResponsePreview::class)->message($e->getMessage())
+                : 'Ошибка загрузки категорий';
+            Notification::make()
+                ->title('Не удалось загрузить категории Ozon. Можно ввести ID вручную.')
+                ->body($msg)->danger()->send();
+        }
+    }
+
+    /** @param array<int,mixed> $nodes */
+    private function collectLeafPairs(array $nodes, string $parentName, int $parentId): array
+    {
+        $options = [];
+        foreach ($nodes as $node) {
+            if (! is_array($node)) {
+                continue;
+            }
+            $catId = (int) ($node['description_category_id'] ?? 0);
+            $catName = (string) ($node['category_name'] ?? '');
+            $types = is_array($node['type'] ?? null) ? $node['type'] : [];
+            $children = is_array($node['children'] ?? null) ? $node['children'] : [];
+            $effectiveCatId = $catId > 0 ? $catId : $parentId;
+            $effectiveCatName = $catName !== '' ? $catName : $parentName;
+            foreach ($types as $type) {
+                if (! is_array($type)) {
+                    continue;
+                }
+                $typeId = (int) ($type['type_id'] ?? 0);
+                $typeName = (string) ($type['type_name'] ?? '');
+                if ($typeId > 0 && $effectiveCatId > 0) {
+                    $options[$effectiveCatId.'|'.$typeId] = $effectiveCatName.' — '.$typeName;
+                }
+            }
+            if ($children !== []) {
+                $options = array_merge($options, $this->collectLeafPairs($children, $effectiveCatName, $effectiveCatId));
+            }
+        }
+
+        return $options;
     }
 
     public function saveCategory(): void
     {
         app(OzonAdmin::class)->authorize();
-        $this->validate(['categoryId' => 'required|integer|min:1|max:9223372036854775807', 'typeId' => 'required|integer|min:1|max:9223372036854775807']);
-        app(OzonAdminSettings::class)->saveCategory((int) $this->categoryId, (int) $this->typeId);
+        $state = $this->categoryFormState;
+        $mode = $state['taxonomyMode'] ?? 'taxonomy';
+
+        if ($mode === 'taxonomy') {
+            $key = (string) ($state['categoryTypeKey'] ?? '');
+            $parts = explode('|', $key, 2);
+            if (count($parts) !== 2 || (int) $parts[0] <= 0 || (int) $parts[1] <= 0) {
+                Notification::make()->title('Выберите категорию из списка или переключитесь на ручной ввод')->warning()->send();
+
+                return;
+            }
+            app(OzonAdminSettings::class)->saveCategory((int) $parts[0], (int) $parts[1]);
+        } else {
+            $catId = (int) ($state['categoryId'] ?? 0);
+            $typeId = (int) ($state['typeId'] ?? 0);
+            $this->validate([
+                'categoryFormState.categoryId' => 'required|integer|min:1',
+                'categoryFormState.typeId' => 'required|integer|min:1',
+            ]);
+            app(OzonAdminSettings::class)->saveCategory($catId, $typeId);
+        }
         Notification::make()->title('Общая категория сохранена')->success()->send();
     }
 
