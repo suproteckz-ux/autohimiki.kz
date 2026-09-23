@@ -38,6 +38,93 @@
                 <span wire:loading wire:target="loadCategoryOptions" class="text-sm text-gray-500">Загрузка категорий и типов Ozon…</span>
             </div>
             {{ $this->categoryForm }}
+            {{-- Alpine picker: pairs arrive as a one-time browser event and live only in JS memory.
+                 Nothing is written to session, cache, DB, or disk. --}}
+            @if (($this->categoryFormState['taxonomyMode'] ?? 'taxonomy') === 'taxonomy')
+            <div
+                x-data="{
+                    pairs: {},
+                    count: 0,
+                    search: '',
+                    results: [],
+                    selectedKey: '',
+                    open: false,
+                    init() {
+                        const saved = @js($this->categoryFormState['categoryTypeKey'] ?? '');
+                        if (saved.includes('|')) {
+                            this.selectedKey = saved;
+                            const p = saved.split('|');
+                            this.search = 'ID ' + p[0] + ' / Тип ' + p[1];
+                        }
+                        $wire.on('ozon-category-pairs', ({pairs, count}) => {
+                            this.pairs = pairs ?? {};
+                            this.count = count ?? 0;
+                            if (this.selectedKey && this.pairs[this.selectedKey]) {
+                                this.search = this.pairs[this.selectedKey];
+                            }
+                            this.doFilter();
+                        });
+                    },
+                    doFilter() {
+                        const entries = Object.entries(this.pairs);
+                        const term = this.search.toLowerCase();
+                        this.results = (term
+                            ? entries.filter(([, v]) => v.toLowerCase().includes(term))
+                            : entries
+                        ).slice(0, 50);
+                    },
+                    pick(key, label) {
+                        this.selectedKey = key;
+                        this.search = label;
+                        this.open = false;
+                        $wire.set('categoryFormState.categoryTypeKey', key);
+                    },
+                    onInput() {
+                        if (this.selectedKey) {
+                            this.selectedKey = '';
+                            $wire.set('categoryFormState.categoryTypeKey', '');
+                        }
+                        this.doFilter();
+                        this.open = Object.keys(this.pairs).length > 0;
+                    }
+                }"
+            >
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
+                    Категория и тип Ozon
+                </label>
+                <div class="relative">
+                    <input
+                        type="text"
+                        x-model="search"
+                        @input="onInput()"
+                        @focus="open = !selectedKey && Object.keys(pairs).length > 0"
+                        @keydown.escape="open = false"
+                        placeholder="Введите название для поиска…"
+                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                    />
+                    <div
+                        x-show="open && results.length > 0"
+                        @click.outside="open = false"
+                        x-transition
+                        class="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:bg-gray-800 dark:border-gray-600"
+                    >
+                        <template x-for="[key, label] in results" :key="key">
+                            <div
+                                @click="pick(key, label)"
+                                :class="key === selectedKey ? 'bg-primary-50 font-medium dark:bg-primary-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
+                                class="cursor-pointer px-3 py-2 text-sm"
+                                x-text="label"
+                            ></div>
+                        </template>
+                    </div>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <span x-show="selectedKey">Выбрано: <code x-text="selectedKey" class="font-mono"></code></span>
+                    <span x-show="!selectedKey && count > 0" x-text="count + ' пар загружено. Введите для поиска.'"></span>
+                    <span x-show="count === 0">Нажмите «Загрузить список из Ozon» для получения актуального списка.</span>
+                </p>
+            </div>
+            @endif
             <x-filament::button wire:click="saveCategory" wire:loading.attr="disabled" wire:target="saveCategory">
                 Сохранить категорию
             </x-filament::button>

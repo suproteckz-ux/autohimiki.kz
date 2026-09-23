@@ -6,6 +6,7 @@ use App\Services\Ozon\OzonAdmin;
 use App\Services\Ozon\OzonAdminSettings;
 use App\Services\Ozon\OzonClient;
 use App\Services\Ozon\OzonConnectionResponsePreview;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -34,8 +35,12 @@ class OzonDashboard extends Page implements HasForms
 
     public array $categoryFormState = [];
 
+    // Always empty — pairs are dispatched to the browser, never stored in Livewire snapshot.
     #[Locked]
     public array $categoryTypeOptions = [];
+
+    #[Locked]
+    public int $categoryTypePairsCount = 0;
 
     #[Locked]
     public array $warehouses = [];
@@ -77,23 +82,9 @@ class OzonDashboard extends Page implements HasForms
                 ->default('taxonomy')
                 ->live()
                 ->required(),
-            Select::make('categoryTypeKey')
-                ->label('Категория и тип Ozon')
-                ->options(fn () => $this->categoryTypeOptions)
-                ->searchable()
-                ->getOptionLabelUsing(function (string $value): string {
-                    if (isset($this->categoryTypeOptions[$value])) {
-                        return $this->categoryTypeOptions[$value];
-                    }
-                    $parts = explode('|', $value, 2);
-
-                    return count($parts) === 2 ? "ID {$parts[0]} / Тип {$parts[1]}" : $value;
-                })
-                ->helperText(fn () => $this->categoryTypeOptions === []
-                    ? 'Нажмите «Загрузить список из Ozon» для получения актуального списка пар категория/тип.'
-                    : count($this->categoryTypeOptions).' пар загружено.')
-                ->visible(fn (Get $get) => ($get('taxonomyMode') ?? 'taxonomy') === 'taxonomy')
-                ->required(fn (Get $get) => ($get('taxonomyMode') ?? 'taxonomy') === 'taxonomy'),
+            // Value is set by the Alpine picker in the blade via $wire.set().
+            // Hidden keeps it in Filament form state so saveCategory() can read it.
+            Hidden::make('categoryTypeKey'),
             TextInput::make('categoryId')
                 ->label('description_category_id')
                 ->numeric()
@@ -112,21 +103,30 @@ class OzonDashboard extends Page implements HasForms
     public function loadCategoryOptions(): void
     {
         app(OzonAdmin::class)->authorize();
+        // Full Ozon category tree JSON can be several MB; json_decode may exceed the default
+        // web memory_limit (128 M) while CLI runs without a limit — confirmed production OOM cause.
+        ini_set('memory_limit', '256M');
         try {
-            $this->categoryTypeOptions = app(OzonClient::class)->categoryTypePairs();
-            if ($this->categoryTypeOptions === []) {
+            $pairs = app(OzonClient::class)->categoryTypePairs();
+            $count = count($pairs);
+            // Pairs are dispatched to the browser as a one-time event.
+            // They live only in Alpine x-data (JS memory) for the lifetime of the page —
+            // never written to session, cache, DB, or disk.
+            $this->dispatch('ozon-category-pairs', pairs: $pairs, count: $count);
+            unset($pairs);
+            $this->categoryTypePairsCount = $count;
+            if ($count === 0) {
                 Notification::make()->title('Список категорий пуст')->warning()->send();
             } else {
-                Notification::make()->title('Загружено '.count($this->categoryTypeOptions).' пар категория/тип')->success()->send();
+                Notification::make()->title('Загружено '.$count.' пар категория/тип')->success()->send();
             }
         } catch (\Throwable $e) {
-            $this->categoryTypeOptions = [];
-            $msg = $e instanceof \RuntimeException
-                ? app(OzonConnectionResponsePreview::class)->message($e->getMessage())
-                : 'Ошибка загрузки категорий';
+            $this->categoryTypePairsCount = 0;
+            $label = get_class($e).': '.$e->getMessage();
+            $preview = app(OzonConnectionResponsePreview::class)->message($label);
             Notification::make()
                 ->title('Не удалось загрузить категории Ozon. Можно ввести ID вручную.')
-                ->body($msg)->danger()->send();
+                ->body($preview)->danger()->send();
         }
     }
 

@@ -111,10 +111,16 @@ class OzonCategoryPickerTest extends TestCase
                 'children' => [],
             ],
         ]);
-        $options = Livewire::test(OzonDashboard::class)->call('loadCategoryOptions')->get('categoryTypeOptions');
-        $this->assertArrayHasKey('100|200', $options);
-        $this->assertArrayNotHasKey('100|0', $options);
-        $this->assertCount(1, $options);
+        Livewire::test(OzonDashboard::class)
+            ->call('loadCategoryOptions')
+            ->assertDispatched('ozon-category-pairs', function ($name, $params) {
+                $pairs = $params['pairs'] ?? [];
+                $count = $params['count'] ?? 0;
+                return isset($pairs['100|200'])
+                    && ! isset($pairs['100|0'])
+                    && count($pairs) === 1
+                    && $count === 1;
+            });
     }
 
     // Test 5: type leaf наследует description_category_id родителя когда ключ отсутствует.
@@ -136,9 +142,12 @@ class OzonCategoryPickerTest extends TestCase
                 ],
             ],
         ]);
-        $options = Livewire::test(OzonDashboard::class)->call('loadCategoryOptions')->get('categoryTypeOptions');
-        $this->assertArrayHasKey('100|300', $options);
-        $this->assertArrayNotHasKey('0|300', $options);
+        Livewire::test(OzonDashboard::class)
+            ->call('loadCategoryOptions')
+            ->assertDispatched('ozon-category-pairs', function ($name, $params) {
+                $pairs = $params['pairs'] ?? [];
+                return isset($pairs['100|300']) && ! isset($pairs['0|300']);
+            });
     }
 
     // Test 6: label формируется как «category_name — type_name».
@@ -152,8 +161,12 @@ class OzonCategoryPickerTest extends TestCase
                 'children' => [],
             ],
         ]);
-        $options = Livewire::test(OzonDashboard::class)->call('loadCategoryOptions')->get('categoryTypeOptions');
-        $this->assertSame('Автохимия — Очистители салона', $options['17028752|97176']);
+        Livewire::test(OzonDashboard::class)
+            ->call('loadCategoryOptions')
+            ->assertDispatched('ozon-category-pairs', function ($name, $params) {
+                $pairs = $params['pairs'] ?? [];
+                return ($pairs['17028752|97176'] ?? null) === 'Автохимия — Очистители салона';
+            });
     }
 
     // Test 7: option value — «description_category_id|type_id».
@@ -167,15 +180,25 @@ class OzonCategoryPickerTest extends TestCase
                 'children' => [],
             ],
         ]);
-        $options = Livewire::test(OzonDashboard::class)->call('loadCategoryOptions')->get('categoryTypeOptions');
-        $this->assertArrayHasKey('17028752|97176', $options);
-        foreach (array_keys($options) as $key) {
-            $this->assertMatchesRegularExpression('/^\d+\|\d+$/', $key);
-        }
+        Livewire::test(OzonDashboard::class)
+            ->call('loadCategoryOptions')
+            ->assertDispatched('ozon-category-pairs', function ($name, $params) {
+                $pairs = $params['pairs'] ?? [];
+                if (! isset($pairs['17028752|97176'])) {
+                    return false;
+                }
+                foreach (array_keys($pairs) as $key) {
+                    if (! preg_match('/^\d+\|\d+$/', $key)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
     }
 
-    // Test 8: searchable Select отображается после загрузки опций.
-    public function test_searchable_select_is_rendered_after_options_load(): void
+    // Test 8: Alpine picker label и кнопка загрузки отображаются.
+    public function test_category_picker_label_and_load_button_are_rendered(): void
     {
         $this->fakeTree($this->sampleTree());
         Livewire::test(OzonDashboard::class)
@@ -199,6 +222,7 @@ class OzonCategoryPickerTest extends TestCase
     {
         app(OzonAdminSettings::class)->saveCategory(1, 1); // ensure settings row exists
         $this->fakeTree($this->sampleTree());
+        // Simulate what Alpine does: $wire.set('categoryFormState.categoryTypeKey', key)
         Livewire::test(OzonDashboard::class)
             ->call('loadCategoryOptions')
             ->set('categoryFormState.taxonomyMode', 'taxonomy')
@@ -220,6 +244,8 @@ class OzonCategoryPickerTest extends TestCase
         Http::fake(['*/v1/description-category/tree' => Http::response(['message' => 'Server Error'], 500)]);
         $component = Livewire::test(OzonDashboard::class)->call('loadCategoryOptions');
         $this->assertSame([], $component->get('categoryTypeOptions'));
+        $this->assertSame(0, $component->get('categoryTypePairsCount'));
+        $component->assertNotDispatched('ozon-category-pairs');
     }
 
     // Test 12: секреты не выводятся в HTML страницы.
@@ -264,15 +290,16 @@ class OzonCategoryPickerTest extends TestCase
                 ],
             ],
         ]);
-        $options = Livewire::test(OzonDashboard::class)
-            ->call('loadCategoryOptions')
-            ->get('categoryTypeOptions');
-        $this->assertNotEmpty($options);
-        $this->assertArrayHasKey('200001176|97176', $options);
-        $this->assertSame('Очистители салона — Очистители салона', $options['200001176|97176']);
-        foreach (array_keys($options) as $key) {
-            $this->assertMatchesRegularExpression('/^\d+\|\d+$/', $key);
-        }
+        $component = Livewire::test(OzonDashboard::class)->call('loadCategoryOptions');
+        // Livewire snapshot must stay lean — pairs go to the browser, not the snapshot.
+        $this->assertSame([], $component->get('categoryTypeOptions'));
+        $this->assertGreaterThan(0, $component->get('categoryTypePairsCount'));
+        $component->assertDispatched('ozon-category-pairs', function ($name, $params) {
+            $pairs = $params['pairs'] ?? [];
+            return isset($pairs['200001176|97176'])
+                && $pairs['200001176|97176'] === 'Очистители салона — Очистители салона'
+                && preg_match('/^\d+\|\d+$/', '200001176|97176');
+        });
     }
 
     // Test 15: direct leaf inherits parent description_category_id when key absent.
@@ -295,11 +322,13 @@ class OzonCategoryPickerTest extends TestCase
                 ],
             ],
         ]);
-        $options = Livewire::test(OzonDashboard::class)
+        Livewire::test(OzonDashboard::class)
             ->call('loadCategoryOptions')
-            ->get('categoryTypeOptions');
-        $this->assertArrayHasKey('17028752|97177', $options);
-        $this->assertStringContainsString('Автохимия и автокосметика', $options['17028752|97177']);
+            ->assertDispatched('ozon-category-pairs', function ($name, $params) {
+                $pairs = $params['pairs'] ?? [];
+                return isset($pairs['17028752|97177'])
+                    && str_contains($pairs['17028752|97177'], 'Автохимия и автокосметика');
+            });
     }
 
     // Test 16: direct leaf — tree is not written to DB or settings.
@@ -320,5 +349,87 @@ class OzonCategoryPickerTest extends TestCase
         $this->assertStringNotContainsString('category_name', $settingsJson);
         $this->assertStringNotContainsString('type_name', $settingsJson);
         $this->assertStringNotContainsString('200001176', $settingsJson);
+    }
+
+    // Test 17: SESSION_DRIVER=file by default — pairs must never be written to session.
+    public function test_session_never_stores_pairs_after_load(): void
+    {
+        $this->fakeTree($this->sampleTree());
+        Livewire::test(OzonDashboard::class)->call('loadCategoryOptions');
+        // SESSION_DRIVER defaults to 'file' (confirmed: key absent from .env).
+        // Writing pairs here would persist them to storage/framework/sessions on disk.
+        $this->assertNull(session('ozon_category_pairs'),
+            'Pairs must not be stored in session (SESSION_DRIVER=file writes to disk)');
+    }
+
+    // Test 18: production-scale synthetic tree — Livewire snapshot stays lean.
+    public function test_large_synthetic_tree_does_not_bloat_livewire_state(): void
+    {
+        // 500 direct-leaf nodes → 500 pairs; simulates production-scale Ozon tree slice.
+        $nodes = [];
+        for ($i = 1; $i <= 500; $i++) {
+            $nodes[] = [
+                'description_category_id' => 1000000 + $i,
+                'category_name' => "Category {$i}",
+                'type_id' => $i,
+                'type_name' => "Type {$i}",
+                'disabled' => false,
+                'children' => [],
+            ];
+        }
+        $this->fakeTree($nodes);
+        $component = Livewire::test(OzonDashboard::class)->call('loadCategoryOptions');
+
+        // Livewire snapshot carries only the integer count, not the full array.
+        $this->assertSame([], $component->get('categoryTypeOptions'));
+        $this->assertSame(500, $component->get('categoryTypePairsCount'));
+
+        // Session must remain empty — pairs go to the browser event, not disk.
+        $this->assertNull(session('ozon_category_pairs'));
+
+        // All 500 pairs arrive in the browser event.
+        $component->assertDispatched('ozon-category-pairs', function ($name, $params) {
+            $pairs = $params['pairs'] ?? [];
+            $count = $params['count'] ?? 0;
+            return $count === 500
+                && isset($pairs['1000001|1'])
+                && isset($pairs['1000500|500']);
+        });
+    }
+
+    // Test 19: one API call; pairs dispatched to browser; no extra Ozon requests.
+    public function test_pairs_dispatched_to_browser_no_extra_api_calls(): void
+    {
+        $this->fakeTree([
+            [
+                'description_category_id' => 200001176,
+                'category_name' => 'Очистители салона',
+                'type_id' => 97176,
+                'type_name' => 'Очистители салона',
+                'disabled' => false,
+                'children' => [],
+            ],
+            [
+                'description_category_id' => 200001177,
+                'category_name' => 'Полироли',
+                'type_id' => 97177,
+                'type_name' => 'Полироли кузова',
+                'disabled' => false,
+                'children' => [],
+            ],
+        ]);
+
+        Livewire::test(OzonDashboard::class)
+            ->call('loadCategoryOptions')
+            ->assertDispatched('ozon-category-pairs', function ($name, $params) {
+                $pairs = $params['pairs'] ?? [];
+                $count = $params['count'] ?? 0;
+                return $count === 2
+                    && ($pairs['200001176|97176'] ?? null) === 'Очистители салона — Очистители салона'
+                    && ($pairs['200001177|97177'] ?? null) === 'Полироли — Полироли кузова';
+            });
+
+        Http::assertSentCount(1); // exactly one Ozon API call total
+        $this->assertNull(session('ozon_category_pairs')); // nothing on disk
     }
 }
