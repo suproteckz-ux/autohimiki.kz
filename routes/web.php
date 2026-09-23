@@ -11,6 +11,15 @@ use App\Http\Controllers\SeoPageController;
 use App\Http\Controllers\SitemapController;
 use Illuminate\Support\Facades\Route;
 
+// Guest cart: serialize mutations for each session (no stock reservation).
+Route::get('/cart', [\App\Http\Controllers\CartController::class, 'index'])->name('cart.index');
+Route::post('/cart', [\App\Http\Controllers\CartController::class, 'store'])->block()->name('cart.store');
+Route::patch('/cart/{id}', [\App\Http\Controllers\CartController::class, 'update'])->whereNumber('id')->block()->name('cart.update');
+Route::delete('/cart/{id}', [\App\Http\Controllers\CartController::class, 'destroy'])->whereNumber('id')->block()->name('cart.destroy');
+Route::get('/checkout', [\App\Http\Controllers\CheckoutController::class, 'index'])->block()->name('checkout.index');
+Route::post('/checkout', [\App\Http\Controllers\CheckoutController::class, 'store'])->middleware('throttle:10,1')->block()->name('checkout.store');
+Route::get('/checkout/success', [\App\Http\Controllers\CheckoutController::class, 'success'])->name('checkout.success');
+
 // ── Главная ───────────────────────────────────────────────────────
 Route::get('/', [HomeController::class, 'index'])->name('home');
 
