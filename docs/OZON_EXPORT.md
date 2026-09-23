@@ -13,6 +13,15 @@ Paloma, Kaspi, витрина, цены сайта, заказы и сущест
 
 ## Безопасная проверка подключения перед выкладкой
 
+Для проверки effective URL и наличия credentials **без HTTP-запросов**:
+
+```bash
+php artisan ozon:diagnose
+```
+
+`OZON_BASE_URL` не используется: host фиксирован в коде. Разбор production-404
+и первичные источники по warehouse v2: [OZON_404_DIAGNOSIS.md](OZON_404_DIAGNOSIS.md).
+
 ```bash
 php artisan ozon:test-connection
 php artisan ozon:seller-info

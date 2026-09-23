@@ -8,10 +8,30 @@ use Illuminate\Support\Facades\Http;
 
 class OzonClient
 {
+    public const BASE_URL = 'https://api-seller.ozon.ru';
+
+    private const SELLER_ENDPOINT = '/v1/seller/info';
+
+    private const WAREHOUSE_ENDPOINT = '/v2/warehouse/list';
+
     // Deliberate allow-list: no category tree, price update or content re-import.
     private const PATHS = ['/v3/product/list', '/v3/product/import', '/v1/product/import/info', '/v2/products/stocks', '/v1/description-category/attribute'];
 
     private array $annotationIds = [];
+
+    public function diagnostics(): array
+    {
+        // The same constants build the real read-only requests. No HTTP or DB access.
+        return [
+            'base_host' => self::BASE_URL,
+            'seller_endpoint' => self::SELLER_ENDPOINT,
+            'seller_effective_url' => self::BASE_URL.self::SELLER_ENDPOINT,
+            'warehouse_endpoint' => self::WAREHOUSE_ENDPOINT,
+            'warehouse_effective_url' => self::BASE_URL.self::WAREHOUSE_ENDPOINT,
+            'client_id_configured' => trim((string) config('ozon.client_id')) !== '',
+            'api_key_configured' => trim((string) config('ozon.api_key')) !== '',
+        ];
+    }
 
     public function testConnection(): string
     {
@@ -26,7 +46,7 @@ class OzonClient
 
     public function sellerInfo(): array
     {
-        $data = $this->diagnosticRead('/v1/seller/info');
+        $data = $this->diagnosticRead(self::SELLER_ENDPOINT);
         if (empty($data['company']) && empty($data['result'])) {
             throw new \RuntimeException('invalid seller response (HTTP 200)');
         }
@@ -37,7 +57,7 @@ class OzonClient
     public function warehouses(string $cursor = ''): array
     {
         // One explicit page; no automatic full scan or database mirror.
-        $data = $this->diagnosticRead('/v2/warehouse/list', ['limit' => 100, 'cursor' => $cursor]);
+        $data = $this->diagnosticRead(self::WAREHOUSE_ENDPOINT, ['limit' => 100, 'cursor' => $cursor]);
         if (! isset($data['warehouses']) || ! is_array($data['warehouses']) || ! array_is_list($data['warehouses'])) {
             throw new \RuntimeException('invalid warehouse response (HTTP 200)');
         }
@@ -67,7 +87,7 @@ class OzonClient
 
     private function diagnosticRead(string $path, array $payload = []): array
     {
-        if (! in_array($path, ['/v1/seller/info', '/v2/warehouse/list'], true)) {
+        if (! in_array($path, [self::SELLER_ENDPOINT, self::WAREHOUSE_ENDPOINT], true)) {
             throw new \RuntimeException('read-only endpoint not allowed');
         }
         if (trim((string) config('ozon.client_id')) === '' || trim((string) config('ozon.api_key')) === '') {
@@ -78,9 +98,9 @@ class OzonClient
             $request = Http::withHeaders(['Client-Id' => config('ozon.client_id'), 'Api-Key' => config('ozon.api_key')])
                 ->acceptJson()->connectTimeout(10)->timeout(config('ozon.timeout'))
                 ->withOptions(['allow_redirects' => false]);
-            $response = $path === '/v1/seller/info'
-                ? $request->withBody('{}', 'application/json')->post('https://api-seller.ozon.ru'.$path)
-                : $request->asJson()->post('https://api-seller.ozon.ru'.$path, $payload);
+            $response = $path === self::SELLER_ENDPOINT
+                ? $request->withBody('{}', 'application/json')->post(self::BASE_URL.$path)
+                : $request->asJson()->post(self::BASE_URL.$path, $payload);
         } catch (ConnectionException $error) {
             $timeout = str_contains(strtolower($error->getMessage()), 'timed out') || str_contains($error->getMessage(), 'cURL error 28');
             throw new \RuntimeException($timeout ? 'timeout' : 'network error');
