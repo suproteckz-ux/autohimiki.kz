@@ -70,7 +70,8 @@ class KaspiNewProductsCommandTest extends TestCase
         $this->assertSame($included, $rows[0]['product_id']);
         $this->assertSame($before, DB::table('products')->orderBy('id')->get()->toJson());
         $this->withToken('test-secret')->getJson('/api/internal/kaspi-content/candidates?scope=new_products&force_content_refresh=true')
-            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.sku', 'active-new');
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.sku', 'active-new')
+            ->assertJsonPath('scope', 'new_products');
         $this->withToken('test-secret')->getJson('/api/internal/kaspi-content/candidates?scope=all')
             ->assertUnprocessable();
 
@@ -81,9 +82,40 @@ class KaspiNewProductsCommandTest extends TestCase
     public function test_candidate_client_forwards_only_the_explicit_new_products_scope(): void
     {
         Http::preventStrayRequests();
-        Http::fake(['*' => Http::response(['data' => [], 'next_cursor' => null])]);
+        Http::fake(['*' => Http::response(['data' => [], 'next_cursor' => null, 'scope' => 'new_products'])]);
         app(KaspiProductionCandidateClient::class)->page(['scope' => 'new_products', 'force_content_refresh' => true]);
         Http::assertSent(fn ($request) => $request['scope'] === 'new_products' && $request['force_content_refresh'] === 'true');
+    }
+
+    public function test_legacy_unscoped_response_fails_before_resolver_or_chromium(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['*' => Http::response(['data' => [$this->candidate(50, 'old-product')], 'next_cursor' => null])]);
+        $bridge = Mockery::mock(KaspiProductionBridgeService::class);
+        $bridge->shouldNotReceive('prepareRefreshCandidate');
+        $bridge->shouldNotReceive('send');
+        $this->app->instance(KaspiProductionBridgeService::class, $bridge);
+
+        $this->assertSame(1, Artisan::call('kaspi:push-new-products', ['--dry-run' => true]));
+        $rows = $this->outputRows();
+        $this->assertSame(0, $rows[0]['summary']['total_candidates']);
+        $this->assertSame('candidate_scope_not_confirmed', $rows[0]['batch_error']);
+        Http::assertSent(fn ($request) => $request['scope'] === 'new_products');
+    }
+
+    public function test_empty_confirmed_scope_reports_zero_without_starting_pipeline(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['*' => Http::response(['data' => [], 'next_cursor' => null, 'scope' => 'new_products'])]);
+        $bridge = Mockery::mock(KaspiProductionBridgeService::class);
+        $bridge->shouldNotReceive('prepareRefreshCandidate');
+        $bridge->shouldNotReceive('send');
+        $this->app->instance(KaspiProductionBridgeService::class, $bridge);
+
+        $this->assertSame(0, Artisan::call('kaspi:push-new-products', ['--dry-run' => true]));
+        $rows = $this->outputRows();
+        $this->assertSame(0, $rows[0]['summary']['total_candidates']);
+        $this->assertNull($rows[0]['batch_error']);
     }
 
     public function test_dry_run_uses_existing_force_pipeline_without_posts_or_product_writes(): void

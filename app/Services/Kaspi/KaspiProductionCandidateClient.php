@@ -42,6 +42,11 @@ class KaspiProductionCandidateClient
             || count($body['data']) > $limit) {
             throw new \RuntimeException('candidate_invalid_json');
         }
+        if (isset($query['scope']) && ($body['scope'] ?? null) !== $query['scope']) {
+            // A legacy endpoint silently ignores unknown query parameters. Never treat
+            // its unscoped response as the new-products queue or start Chromium for it.
+            throw new \RuntimeException('candidate_scope_not_confirmed');
+        }
         $next = $body['next_cursor'];
         if ($next !== null && (! is_int($next) || $next <= $cursor || $body['data'] === [])) {
             throw new \RuntimeException('candidate_invalid_cursor');

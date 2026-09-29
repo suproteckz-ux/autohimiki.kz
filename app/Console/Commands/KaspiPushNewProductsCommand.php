@@ -151,6 +151,7 @@ class KaspiPushNewProductsCommand extends Command
             'invalid_production_base_url', 'preview_transport_failed', 'import_transport_failed_check_before_retry',
             'invalid_import_response_check_before_retry', 'import_invalid_response', 'candidate_connection_failed_or_timeout',
             'candidate_invalid_json', 'candidate_invalid_cursor', 'candidate_invalid_row', 'wrong_product', 'captcha_detected',
+            'candidate_scope_not_confirmed',
             'collector_timeout', 'collector_invalid_json', 'collector_failed', 'collector_empty_or_unavailable',
             'collector_html_too_large', 'parser_empty_or_invalid_html', 'parser_title_missing', 'parser_images_missing',
             'invalid_payload', 'payload_identity_mismatch', 'commercial_attribute_not_allowed', 'image_url_not_allowed',

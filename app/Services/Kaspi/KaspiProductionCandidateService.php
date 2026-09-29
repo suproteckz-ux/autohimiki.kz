@@ -51,7 +51,7 @@ class KaspiProductionCandidateService
                 continue;
             }
             if (count($data) === $limit) {
-                return ['data' => $data, 'next_cursor' => $lastId];
+                return $this->result($data, $lastId, $options);
             }
             $galleryCount = $force ? DB::table('product_images')->where('product_id', $product->id)->count() : (int) $product->gallery_count;
             $row = ['sku' => $product->sku, 'name' => $product->name,
@@ -65,6 +65,17 @@ class KaspiProductionCandidateService
             $lastId = (int) $product->id;
         }
 
-        return ['data' => $data, 'next_cursor' => null];
+        return $this->result($data, null, $options);
+    }
+
+    private function result(array $data, ?int $nextCursor, array $options): array
+    {
+        $result = ['data' => $data, 'next_cursor' => $nextCursor];
+        if (($options['scope'] ?? null) === 'new_products') {
+            // The client requires this acknowledgement before it may start Chromium.
+            $result['scope'] = 'new_products';
+        }
+
+        return $result;
     }
 }

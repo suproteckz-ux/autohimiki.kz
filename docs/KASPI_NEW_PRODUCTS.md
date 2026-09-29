@@ -10,6 +10,12 @@ is enforced by the production Candidate API and is checked again immediately bef
 each item is prepared. Assigning a real category removes the product from subsequent
 runs and from an in-progress run before it can be imported.
 
+The scoped API response must explicitly acknowledge `scope=new_products`. This makes
+mixed-version operation fail closed: an older endpoint that ignores the query parameter
+cannot return its general force-refresh list to the command. The command stops with
+`candidate_scope_not_confirmed` before invoking the resolver or Chromium. A confirmed
+empty scope reports `total_candidates: 0` and performs no product preparation.
+
 The command delegates resolution, Chromium collection, parsing, payload validation,
 preview and import to the existing force-refresh pipeline. It does not assign a category
 or maintain a second importer. Existing content hash deduplication makes repeat runs
