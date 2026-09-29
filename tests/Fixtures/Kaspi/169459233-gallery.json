@@ -1,0 +1,279 @@
+{
+  "card": {
+    "title": "Ma-Fra тряпка DP-470 1 шт",
+    "id": "169459233"
+  },
+  "description": "DP-470, GREY, 40х40, ULTRASONIC CUT, Тряпка для протирки автомобиля, состав 80% полиэстер, 20% полиамид, цвет серый",
+  "specifications": [
+    {
+      "code": "Car wash accessories*Obsie harakteristiki",
+      "name": "Общие характеристики",
+      "features": [
+        {
+          "code": "car wash accessories*type",
+          "name": "Тип",
+          "description": null,
+          "type": "ENUM",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "тряпка"
+            }
+          ],
+          "mandatory": true,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 0,
+          "visible": true,
+          "multiValued": false,
+          "important": true,
+          "importanceScore": null,
+          "generated": false
+        },
+        {
+          "code": "car wash accessories*material",
+          "name": "Материал",
+          "description": null,
+          "type": "ENUM",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "полиэстер"
+            }
+          ],
+          "mandatory": true,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 1,
+          "visible": true,
+          "multiValued": true,
+          "important": true,
+          "importanceScore": 1,
+          "generated": false
+        },
+        {
+          "code": "car wash accessories*purpose",
+          "name": "Назначение",
+          "description": null,
+          "type": "ENUM",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "впитывание влаги"
+            },
+            {
+              "value": "для удаления насекомых"
+            },
+            {
+              "value": "нанесение составов"
+            },
+            {
+              "value": "очистка поверхности"
+            },
+            {
+              "value": "полировка"
+            }
+          ],
+          "mandatory": true,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 2,
+          "visible": true,
+          "multiValued": true,
+          "important": true,
+          "importanceScore": null,
+          "generated": false
+        },
+        {
+          "code": "car wash accessories*place of application",
+          "name": "Место применения",
+          "description": null,
+          "type": "ENUM",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "кузов"
+            },
+            {
+              "value": "стекла"
+            },
+            {
+              "value": "салон"
+            },
+            {
+              "value": "сидения"
+            }
+          ],
+          "mandatory": true,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 3,
+          "visible": true,
+          "multiValued": true,
+          "important": true,
+          "importanceScore": null,
+          "generated": false
+        },
+        {
+          "code": "car wash accessories*amount",
+          "name": "Количество в упаковке",
+          "description": null,
+          "type": "NUMBER",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "1"
+            }
+          ],
+          "mandatory": true,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 4,
+          "visible": true,
+          "multiValued": false,
+          "important": true,
+          "importanceScore": null,
+          "generated": false
+        },
+        {
+          "code": "car wash accessories*length",
+          "name": "Длина",
+          "description": null,
+          "type": "NUMBER",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "40 см"
+            }
+          ],
+          "mandatory": false,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 5,
+          "visible": true,
+          "multiValued": false,
+          "important": true,
+          "importanceScore": 1,
+          "generated": false
+        },
+        {
+          "code": "car wash accessories*width",
+          "name": "Ширина",
+          "description": null,
+          "type": "NUMBER",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "40 см"
+            }
+          ],
+          "mandatory": false,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 6,
+          "visible": true,
+          "multiValued": false,
+          "important": true,
+          "importanceScore": null,
+          "generated": false
+        },
+        {
+          "code": "car wash accessories*name",
+          "name": "Артикул производителя",
+          "description": null,
+          "type": "STRING",
+          "range": null,
+          "comparable": null,
+          "featureUnit": null,
+          "featureValues": [
+            {
+              "value": "DP-470"
+            }
+          ],
+          "mandatory": true,
+          "keyAttribute": false,
+          "merchantVisible": null,
+          "position": 8,
+          "visible": true,
+          "multiValued": false,
+          "important": false,
+          "importanceScore": null,
+          "generated": false
+        }
+      ],
+      "position": 0
+    }
+  ],
+  "galleryImages": [
+    {
+      "small": "https://resources.cdn-kaspi.kz/img/m/p/pbb/pfa/151613980.png?format=gallery-small",
+      "medium": "https://resources.cdn-kaspi.kz/img/m/p/pbb/pfa/151613980.png?format=gallery-medium",
+      "large": "https://resources.cdn-kaspi.kz/img/m/p/pbb/pfa/151613980.png?format=gallery-large",
+      "location": "pbb/pfa/151613980.png",
+      "generated": false,
+      "visualType": null
+    },
+    {
+      "small": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575978.?format=gallery-small",
+      "medium": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575978.?format=gallery-medium",
+      "large": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575978.?format=gallery-large",
+      "location": "p44/p7e/161575978.",
+      "generated": false,
+      "visualType": null
+    },
+    {
+      "small": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575979.?format=gallery-small",
+      "medium": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575979.?format=gallery-medium",
+      "large": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575979.?format=gallery-large",
+      "location": "p44/p7e/161575979.",
+      "generated": false,
+      "visualType": null
+    },
+    {
+      "small": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575980.?format=gallery-small",
+      "medium": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575980.?format=gallery-medium",
+      "large": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575980.?format=gallery-large",
+      "location": "p44/p7e/161575980.",
+      "generated": false,
+      "visualType": null
+    },
+    {
+      "small": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575981.?format=gallery-small",
+      "medium": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575981.?format=gallery-medium",
+      "large": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575981.?format=gallery-large",
+      "location": "p44/p7e/161575981.",
+      "generated": false,
+      "visualType": null
+    },
+    {
+      "small": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575982.?format=gallery-small",
+      "medium": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575982.?format=gallery-medium",
+      "large": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575982.?format=gallery-large",
+      "location": "p44/p7e/161575982.",
+      "generated": false,
+      "visualType": null
+    },
+    {
+      "small": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575983.?format=gallery-small",
+      "medium": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575983.?format=gallery-medium",
+      "large": "https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575983.?format=gallery-large",
+      "location": "p44/p7e/161575983.",
+      "generated": false,
+      "visualType": null
+    }
+  ]
+}

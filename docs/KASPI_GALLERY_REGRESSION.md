@@ -1,5 +1,29 @@
 # Kaspi gallery regression investigation
 
+## Live follow-up: 2026-09-29
+
+After the operator reproduced parsed=1 on commit 439c7b4, the existing local Chromium
+collector successfully fetched card 169459233 (HTTP 200). Its BACKEND gallery already
+contains seven images: one PNG and six numeric filenames ending with a bare dot,
+such as `https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575978.?format=gallery-large`.
+The parser rejected those six as `unsupported_extension`. This is the confirmed
+cause on the captured live response; the earlier incomplete-BACKEND hypothesis below
+did not explain this card.
+
+Running old and fixed parsers against the identical captured HTML returned 1 and 7
+respectively. The fix accepts only this numeric bare-dot path form on the exact Kaspi
+product CDN with gallery-large format (existing normalization upgrades smaller gallery
+variants). MIME, decoded image validation, download limits and URL protections remain
+unchanged. ProductionBridge is unchanged from 439c7b4.
+
+The full local capture remains in ignored storage/framework/testing; only the selected
+product card/gallery/description/specifications are committed in
+tests/Fixtures/Kaspi/169459233-gallery.json, with no headers, cookies or credentials.
+No additional debug mode was necessary. Regression tests cover the actual seven URLs
+and rejection of unrelated formats, filenames and hosts. All Kaspi tests: 156 passed,
+4598 assertions. No production dry-run or execute was run by the agent. The same
+single-SKU dry-run below is the next operator verification; expected parsed/sent=7.
+
 ## Evidence and limits
 
 Target: SKU `РТ-00001534`, product 612, Kaspi card 169459233.

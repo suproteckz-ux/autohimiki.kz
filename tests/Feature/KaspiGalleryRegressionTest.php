@@ -57,6 +57,30 @@ class KaspiGalleryRegressionTest extends TestCase
         $this->assertSame($this->images(), $parsed['images']);
     }
 
+    public function test_captured_kaspi_gallery_keeps_numeric_images_without_extensions(): void
+    {
+        // Product content only, extracted from the real local Chromium response on 2026-09-29.
+        $item = json_decode(file_get_contents(base_path('tests/Fixtures/Kaspi/169459233-gallery.json')), true);
+        $parsed = app(KaspiEnrichmentParser::class)->parse('<body><script>BACKEND.components.item = '.json_encode($item).';</script></body>', self::URL, true);
+        $this->assertCount(7, $parsed['images']);
+        $this->assertSame(array_column($item['galleryImages'], 'large'), $parsed['images']);
+        $this->assertNotEmpty($parsed['description']);
+        $this->assertNotEmpty($parsed['attributes']);
+    }
+
+    public function test_bare_dot_exception_does_not_admit_other_formats_or_hosts(): void
+    {
+        $parser = app(KaspiEnrichmentParser::class);
+        $reject = new \ReflectionMethod($parser, 'rejectImageReason');
+        foreach (['https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575978.',
+            'https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575978.?format=download',
+            'https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/file.?format=gallery-large',
+            'https://resources.cdn-kaspi.kz.evil.test/img/m/p/p44/p7e/161575978.?format=gallery-large',
+            'https://resources.cdn-kaspi.kz/img/m/p/p44/p7e/161575978.html?format=gallery-large'] as $url) {
+            $this->assertSame('unsupported_extension', $reject->invoke($parser, $url));
+        }
+    }
+
     public function test_primary_backend_image_does_not_hide_matching_json_gallery(): void
     {
         $parsed = app(KaspiEnrichmentParser::class)->parse($this->html('json'), self::URL, true);

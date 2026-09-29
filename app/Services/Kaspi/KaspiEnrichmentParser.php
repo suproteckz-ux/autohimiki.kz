@@ -201,7 +201,11 @@ class KaspiEnrichmentParser
         }
 
         $supportedImagePath = preg_match('/\.(jpe?g|png|webp)$/i', $path)
-            || ($isKaspiProductCdn && str_ends_with($path, '.bin') && str_starts_with($format, 'gallery-'));
+            || ($isKaspiProductCdn && str_ends_with($path, '.bin') && str_starts_with($format, 'gallery-'))
+            // Kaspi also serves gallery images with numeric filenames ending in a bare dot.
+            // The downloader still validates the actual MIME type and decoded image bytes.
+            || ($host === 'resources.cdn-kaspi.kz' && preg_match('#^/img/m/p/(?:[a-z0-9]+/)+[0-9]+\.$#D', $path)
+                && $format === 'gallery-large');
         if (! $supportedImagePath) {
             return 'unsupported_extension';
         }
