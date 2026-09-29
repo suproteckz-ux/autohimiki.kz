@@ -3,7 +3,7 @@
     $whatsapp = \App\Services\CacheService::setting('whatsapp', '');
 @endphp
 <header class="ah-header" x-data="{ mobileOpen: false }" @keydown.escape.window="if (mobileOpen) { mobileOpen = false; $refs.menuButton.focus() }">
-    <div class="ah-topbar"><div class="ah-container"><span>Алматы · Автохимия и детейлинг</span><span>Доставка по Казахстану</span><span>Ежедневно 9:00–20:00</span></div></div>
+    <div class="ah-topbar"><div class="ah-container"><span>Алматы · Автохимия и детейлинг</span><span>Доставка по Казахстану</span><span>Пн–Пт: 09:00–18:00 · Сб: 11:00–16:00 · Вс: выходной</span></div></div>
     <div class="ah-container ah-header-main">
         <a class="ah-logo" href="{{ route('home') }}" aria-label="Autohimiki.kz — главная"><x-ui.brand-mark /><span>AUTOHIMIKI<span class="ah-orange">.KZ</span><small>АВТОХИМИЯ И ДЕТЕЙЛИНГ</small></span></a>
         <div class="ah-header-search"><x-ui.search /></div>

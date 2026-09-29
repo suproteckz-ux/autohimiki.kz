@@ -2,7 +2,7 @@
 @php
     $phone = \App\Services\CacheService::setting('phone', '');
     $email = \App\Services\CacheService::setting('email', '');
-    $address = \App\Services\CacheService::setting('address', 'Almaty');
+    $address = \App\Services\CacheService::setting('address', '');
     $instagram = \App\Services\CacheService::setting('instagram', '');
 
     $schema = [
@@ -13,17 +13,21 @@
         'url' => url('/'),
         'address' => [
             '@type' => 'PostalAddress',
-            'streetAddress' => $address,
-            'addressLocality' => 'Almaty',
-            'addressRegion' => 'Almaty',
+            'addressLocality' => 'Алматы',
+            'addressRegion' => 'Алматы',
             'addressCountry' => 'KZ',
         ],
-        'openingHours' => [
-            'Mo-Fr 09:00-19:00',
-            'Sa 10:00-17:00',
+        'openingHoursSpecification' => [
+            ['@type' => 'OpeningHoursSpecification', 'dayOfWeek' => ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], 'opens' => '09:00', 'closes' => '18:00'],
+            ['@type' => 'OpeningHoursSpecification', 'dayOfWeek' => 'Saturday', 'opens' => '11:00', 'closes' => '16:00'],
+            ['@type' => 'OpeningHoursSpecification', 'dayOfWeek' => 'Sunday', 'opens' => '00:00', 'closes' => '00:00'],
         ],
         'priceRange' => 'KZT',
     ];
+
+    if ($address) {
+        $schema['address']['streetAddress'] = $address;
+    }
 
     if ($phone) {
         $schema['telephone'] = $phone;
@@ -38,5 +42,5 @@
     }
 @endphp
 
-<script type="application/ld+json">{!! \Illuminate\Support\Js::from($schema) !!}</script>
+<script type="application/ld+json">{!! \Illuminate\Support\Js::encode($schema) !!}</script>
 @endonce

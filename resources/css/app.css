@@ -4,6 +4,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Homepage copy: preserve the hero footprint and existing visual language. */
+.ah-home .ah-hero-availability{margin-top:10px;font-size:12px;line-height:1.5;color:#cfd5dc}
+.ah-home .ah-hero h1{font-size:clamp(32px,3.3vw,50px);overflow-wrap:break-word}
+.ah-home .ah-seo>div>div>h3{margin-top:22px;text-transform:none}
+.ah-home .ah-seo p a{font-size:inherit;text-decoration:underline;text-underline-offset:3px}
+.ah-home-business{border-top:1px solid var(--ah-line)}
+.ah-home-business h2{font-size:24px;line-height:1.3;margin-bottom:12px}
+.ah-home-business p{max-width:960px;margin-top:8px;font-size:13px;line-height:1.7;color:#596572}
+.ah-home-business a{color:var(--ah-orange-dark);text-decoration:underline}
+@media(max-width:768px){.ah-home .ah-hero h1{font-size:28px}.ah-home .ah-hero-availability{font-size:11px}.ah-home-business h2{font-size:22px}}
+@media(max-width:479px){.ah-home .ah-hero h1{font-size:23px}}
+
 @layer base {
     html { scroll-behavior: smooth; }
     body { @apply font-sans text-gray-800 bg-white; }
