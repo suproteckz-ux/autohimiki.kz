@@ -24,6 +24,9 @@ class KaspiProductionCandidateClient
         if (isset($options['sku'])) {
             $query['sku'] = trim($options['sku']);
         }
+        if (($options['scope'] ?? null) === 'new_products') {
+            $query['scope'] = 'new_products';
+        }
         try {
             $response = Http::connectTimeout(5)->timeout(30)->withoutRedirecting()
                 ->acceptJson()->withToken($token)->get($url, $query);

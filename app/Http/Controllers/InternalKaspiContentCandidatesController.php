@@ -23,6 +23,7 @@ class InternalKaspiContentCandidatesController extends Controller
             'sku' => ['sometimes', 'required', 'string', 'max:255'],
             'limit' => ['sometimes', 'required', 'integer', 'between:1,100'],
             'cursor' => ['sometimes', 'required', 'integer', 'min:0'],
+            'scope' => ['sometimes', 'required', 'in:new_products'],
         ]);
         if ($validator->fails()) {
             return response()->json(['error' => 'invalid_query', 'fields' => $validator->errors()], 422);

@@ -16,6 +16,10 @@ class KaspiProductionCandidateService
             ->selectSub(DB::table('product_images')->selectRaw('COUNT(*)')->whereColumn('product_id', 'products.id'), 'gallery_count')
             ->where('is_active', true)->where('id', '>', $cursor)
             ->whereNotNull('sku')->whereNotNull('slug');
+        if (($options['scope'] ?? null) === 'new_products') {
+            $query->whereExists(fn ($categories) => $categories->selectRaw('1')->from('categories')
+                ->whereColumn('categories.id', 'products.category_id')->where('categories.slug', 'bez-kategorii'));
+        }
         if ($force) {
             $query->select('products.*');
         }
