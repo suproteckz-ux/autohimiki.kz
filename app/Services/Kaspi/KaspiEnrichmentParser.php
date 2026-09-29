@@ -136,10 +136,11 @@ class KaspiEnrichmentParser
             $push(data_get($image, 'small'), 'backend.gallery.small');
         }
 
-        if ($images !== []) {
-            return $images;
+        // A primary image does not prove that BACKEND contains the full gallery.
+        // Merge the existing product-scoped sources, then normalize/deduplicate once.
+        if ($images === []) {
+            $push($meta['og_image'] ?? null, 'meta.og_image');
         }
-        $push($meta['og_image'] ?? null, 'meta.og_image');
         $push($this->jsonValues($jsonLd, ['image']), 'json_ld.image');
 
         foreach ($xpath->query('//*[contains(@class, "item__gallery") or contains(@class, "product-gallery")]//img[@src or @data-src or @srcset or @data-srcset]') ?: [] as $node) {

@@ -105,7 +105,10 @@ class KaspiProductionBridgeService
                 throw new \RuntimeException('attributes_invalid', 422);
             }
 
-            return ['payload' => $payload, 'preview' => $state];
+            return ['payload' => $payload, 'preview' => $state + [
+                'kaspi_images_parsed' => count($parsed['images']),
+                'images_to_send' => count($payload['content']['images']),
+            ]];
         }
         if (($state['sku'] ?? '') !== $sku || ! in_array($state['main_image_action'] ?? '', ['preserve', 'replace_broken_or_empty'], true)
             || ! in_array($state['description_action'] ?? '', ['preserve', 'fill_if_collected'], true)) {
@@ -134,7 +137,13 @@ class KaspiProductionBridgeService
                 throw new \RuntimeException('invalid_import_response_check_before_retry');
             }
 
+            // Force refresh returns the number of remaining gallery rows (main is separate).
+            // Older/malformed responses must not be presented as a verified stored count.
+            $gallery = $result['gallery_added'] ?? null;
+            $stored = is_int($gallery) && $gallery >= 0 && $gallery < count($payload['content']['images']) ? $gallery + 1 : null;
+
             return ['status' => $result['status'], 'sku' => $result['sku'], 'product_id' => $result['product_id'], 'reason' => null,
+                'images_sent' => count($payload['content']['images']), 'images_stored' => $stored,
                 'cleanup_warnings' => array_values(array_intersect($result['cleanup_warnings'], ['cache_invalidation_failed', 'obsolete_media_cleanup_failed']))];
         }
 
