@@ -87,7 +87,8 @@ class SeoPageSaveTest extends TestCase
             'slug'  => 'test-antigel',
         ]);
 
-        $this->assertSame('Антигель для дизельного топлива', $page->seoTitle());
+        // defaultSeoTitle() appends site name when meta_title is empty
+        $this->assertSame('Антигель для дизельного топлива | Autohimiki.kz', $page->seoTitle());
     }
 
     public function test_seo_title_uses_meta_title_when_set(): void
