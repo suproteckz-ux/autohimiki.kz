@@ -15,6 +15,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
@@ -40,38 +41,46 @@ class SeoPageResource extends Resource
     {
         return $schema
             ->components([
-                Section::make('Основное')
-                    ->columns(2)
-                    ->schema([
-                        TextInput::make('title')
-                            ->label('Заголовок страницы (title-tag)')
-                            ->required()
-                            ->maxLength(255)
-                            ->columnSpanFull(),
-                        TextInput::make('slug')
-                            ->label('URL (slug)')
-                            ->required()
-                            ->unique(ignoreRecord: true)
-                            ->maxLength(255)
-                            ->helperText('Часть URL после домена: autohimiki.kz/slug'),
-                        Toggle::make('is_active')
-                            ->label('Активна')
-                            ->default(true),
-                    ]),
 
-                Section::make('Контент')
+                // ── Ряд 1: Основное + Заголовок/вводный текст ────────────────
+                Grid::make(2)->schema([
+                    Section::make('Основное')
+                        ->columns(2)
+                        ->schema([
+                            TextInput::make('title')
+                                ->label('Title-tag страницы')
+                                ->required()
+                                ->maxLength(255)
+                                ->columnSpanFull(),
+                            TextInput::make('slug')
+                                ->label('URL (slug)')
+                                ->required()
+                                ->unique(ignoreRecord: true)
+                                ->maxLength(255)
+                                ->helperText('autohimiki.kz/slug'),
+                            Toggle::make('is_active')
+                                ->label('Активна')
+                                ->default(true)
+                                ->inline(false),
+                        ]),
+
+                    Section::make('Заголовок и вводный текст')
+                        ->schema([
+                            TextInput::make('h1')
+                                ->label('H1')
+                                ->maxLength(255),
+                            Textarea::make('intro')
+                                ->label('Вводный абзац (под H1, до 300 символов)')
+                                ->rows(4)
+                                ->maxLength(500),
+                        ]),
+                ]),
+
+                // ── Ряд 2: Текст статьи (полная ширина) ─────────────────────
+                Section::make('Текст статьи')
                     ->schema([
-                        TextInput::make('h1')
-                            ->label('H1 (заголовок страницы)')
-                            ->maxLength(255)
-                            ->columnSpanFull(),
-                        Textarea::make('intro')
-                            ->label('Вводный абзац (под H1, до 300 символов)')
-                            ->rows(3)
-                            ->maxLength(500)
-                            ->columnSpanFull(),
                         RichEditor::make('seo_text')
-                            ->label('Текст статьи (HTML)')
+                            ->label('')
                             ->toolbarButtons([
                                 'bold', 'italic', 'link',
                                 'bulletList', 'orderedList',
@@ -79,77 +88,79 @@ class SeoPageResource extends Resource
                                 'blockquote', 'codeBlock',
                                 'table',
                             ])
+                            ->extraInputAttributes(['style' => 'min-height: 580px'])
                             ->columnSpanFull(),
                     ]),
 
-                Section::make('Визуальное оформление')
-                    ->description('Hero-блок: изображение, метка и кнопки CTA')
-                    ->collapsible()
-                    ->collapsed()
-                    ->schema([
-                        FileUpload::make('hero_image')
-                            ->label('Hero-изображение')
-                            ->helperText('Рекомендуемый размер: 900×600 px, JPG/WebP')
-                            ->image()
-                            ->disk('public')
-                            ->directory('seo/hero')
-                            ->imagePreviewHeight('180')
-                            ->columnSpanFull(),
-                        TextInput::make('hero_image_alt')
-                            ->label('Alt изображения')
-                            ->maxLength(255)
-                            ->columnSpanFull(),
-                        TextInput::make('hero_label')
-                            ->label('Метка hero (например: «Советы по автохимии»)')
-                            ->maxLength(120)
-                            ->placeholder('Советы по автохимии')
-                            ->columnSpanFull(),
-                    ]),
+                // ── Ряд 3: Hero-изображение + Товары и сравнение ─────────────
+                Grid::make(2)->schema([
+                    Section::make('Hero-изображение')
+                        ->collapsible()
+                        ->collapsed()
+                        ->schema([
+                            FileUpload::make('hero_image')
+                                ->label('Hero-изображение')
+                                ->helperText('900×600 px, JPG/WebP')
+                                ->image()
+                                ->disk('public')
+                                ->directory('seo/hero')
+                                ->imagePreviewHeight('160'),
+                            TextInput::make('hero_image_alt')
+                                ->label('Alt изображения')
+                                ->maxLength(255),
+                            TextInput::make('hero_label')
+                                ->label('Метка hero')
+                                ->maxLength(120)
+                                ->placeholder('Советы по автохимии'),
+                        ]),
 
-                Section::make('Связанные товары и сравнение')
-                    ->schema([
-                        Select::make('products')
-                            ->label('Товары (отображаются в блоке «Рекомендуемые»)')
-                            ->multiple()
-                            ->relationship('products', 'name')
-                            ->searchable()
-                            ->preload()
-                            ->columnSpanFull(),
-                        Toggle::make('show_comparison')
-                            ->label('Показывать блок сравнения товаров')
-                            ->helperText('Отображается только если выбрано 2+ товара')
-                            ->default(false),
-                    ]),
+                    Section::make('Товары и сравнение')
+                        ->schema([
+                            Select::make('products')
+                                ->label('Товары (блок «Рекомендуемые»)')
+                                ->multiple()
+                                ->relationship('products', 'name')
+                                ->getOptionLabelFromRecordUsing(fn ($record) => "{$record->name} [{$record->sku}]")
+                                ->searchable()
+                                ->preload(),
+                            Toggle::make('show_comparison')
+                                ->label('Показывать блок сравнения товаров')
+                                ->helperText('Отображается только если выбрано 2+ товара')
+                                ->default(false)
+                                ->inline(false),
+                        ]),
+                ]),
 
-                static::faqRepeater(),
+                // ── Ряд 4: FAQ + Коммерческий блок ───────────────────────────
+                Grid::make(2)->schema([
+                    static::faqRepeater(),
 
-                Section::make('Коммерческий блок (нижний CTA)')
-                    ->description('Тёмный призыв к действию в конце страницы')
-                    ->collapsible()
-                    ->collapsed()
-                    ->columns(2)
-                    ->schema([
-                        TextInput::make('cta_heading')
-                            ->label('Заголовок CTA')
-                            ->maxLength(255)
-                            ->placeholder('Готовы подготовить автомобиль к зиме?')
-                            ->columnSpanFull(),
-                        Textarea::make('cta_description')
-                            ->label('Описание CTA')
-                            ->rows(2)
-                            ->maxLength(500)
-                            ->columnSpanFull(),
-                        TextInput::make('cta_link')
-                            ->label('Ссылка кнопки CTA')
-                            ->maxLength(500)
-                            ->placeholder('https://autohimiki.kz/catalog/antigel-dlya-dizelnogo-topliva')
-                            ->url(),
-                        TextInput::make('cta_button_text')
-                            ->label('Текст кнопки CTA')
-                            ->maxLength(100)
-                            ->placeholder('Смотреть все антигели'),
-                    ]),
+                    Section::make('Коммерческий блок (нижний CTA)')
+                        ->description('Тёмный призыв к действию в конце страницы')
+                        ->collapsible()
+                        ->collapsed()
+                        ->schema([
+                            TextInput::make('cta_heading')
+                                ->label('Заголовок CTA')
+                                ->maxLength(255)
+                                ->placeholder('Готовы подготовить автомобиль к зиме?'),
+                            Textarea::make('cta_description')
+                                ->label('Описание CTA')
+                                ->rows(2)
+                                ->maxLength(500),
+                            TextInput::make('cta_link')
+                                ->label('Ссылка кнопки CTA')
+                                ->maxLength(500)
+                                ->placeholder('https://autohimiki.kz/catalog/...')
+                                ->url(),
+                            TextInput::make('cta_button_text')
+                                ->label('Текст кнопки CTA')
+                                ->maxLength(100)
+                                ->placeholder('Смотреть все антигели'),
+                        ]),
+                ]),
 
+                // ── Ряд 5: SEO-настройки (полная ширина) ────────────────────
                 static::seoSection(),
             ]);
     }
@@ -205,35 +216,34 @@ class SeoPageResource extends Resource
         ];
     }
 
-    // h1 lives in the Контент section above; exclude it here to avoid a duplicate field.
+    // h1 lives in Row 1 right column; excluded here to avoid duplicate field.
     protected static function seoSection(): Section
     {
         return Section::make('SEO-настройки')
             ->icon('heroicon-o-magnifying-glass')
-            ->collapsible()->collapsed()->columns(2)
+            ->collapsible()
+            ->collapsed()
+            ->columns(3)
             ->schema([
                 TextInput::make('meta_title')
                     ->label('Meta Title')
                     ->live(debounce: 300)
-                    ->hint(fn ($state) => mb_strlen($state ?? '') . ' / 60 симв.')
+                    ->hint(fn ($state) => mb_strlen($state ?? '') . ' / 60')
                     ->hintColor(fn ($state) => mb_strlen($state ?? '') > 60 ? 'warning' : 'gray')
-                    ->maxLength(255)
-                    ->columnSpanFull(),
+                    ->maxLength(255),
                 Textarea::make('meta_description')
                     ->label('Meta Description')
                     ->live(debounce: 300)
-                    ->hint(fn ($state) => mb_strlen($state ?? '') . ' / 160 симв.')
+                    ->hint(fn ($state) => mb_strlen($state ?? '') . ' / 160')
                     ->hintColor(fn ($state) => mb_strlen($state ?? '') > 160 ? 'warning' : 'gray')
-                    ->rows(3)
-                    ->maxLength(500)
-                    ->columnSpanFull(),
+                    ->rows(2)
+                    ->maxLength(500),
                 TextInput::make('canonical_url')
                     ->label('Canonical URL')
                     ->url()
                     ->maxLength(500)
                     ->placeholder('https://autohimiki.kz/antigel-dlya-dizelnogo-topliva')
-                    ->helperText('Оставьте пустым — система сформирует автоматически по slug')
-                    ->columnSpanFull(),
+                    ->helperText('Пусто — формируется автоматически по slug'),
             ]);
     }
 }

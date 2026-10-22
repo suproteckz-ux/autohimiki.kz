@@ -1,7 +1,22 @@
 @props(['product'])
 @php
     $url = route('product.show', $product->slug);
-    $attrs = is_array($product->attributes) ? array_slice($product->attributes, 0, 3) : [];
+
+    // Normalize attributes: supports both [{name,value}] and {"key":"value"} formats
+    $attrs = [];
+    $raw = is_array($product->attributes) ? $product->attributes : [];
+    foreach (array_slice($raw, 0, 3, true) as $key => $val) {
+        if (is_array($val)) {
+            $k = $val['name'] ?? $val['k'] ?? '';
+            $v = $val['value'] ?? $val['v'] ?? '';
+        } else {
+            $k = is_string($key) ? $key : '';
+            $v = is_string($val) ? $val : '';
+        }
+        if ($k !== '' && $v !== '') {
+            $attrs[] = ['k' => $k, 'v' => $v];
+        }
+    }
 @endphp
 <article class="ah-seo-card">
     <a href="{{ $url }}" aria-label="{{ $product->name }}" class="ah-seo-card-image">
@@ -32,16 +47,10 @@
         @if($attrs)
         <dl class="ah-seo-card-specs">
             @foreach($attrs as $attr)
-                @php
-                    $k = $attr['name'] ?? $attr['k'] ?? array_key_first($attr) ?? '';
-                    $v = $attr['value'] ?? $attr['v'] ?? (is_string($attr) ? $attr : '') ?? '';
-                @endphp
-                @if($k && $v)
-                <div>
-                    <dt>{{ $k }}</dt>
-                    <dd>{{ $v }}</dd>
-                </div>
-                @endif
+            <div>
+                <dt>{{ $attr['k'] }}</dt>
+                <dd>{{ $attr['v'] }}</dd>
+            </div>
             @endforeach
         </dl>
         @endif
