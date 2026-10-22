@@ -52,7 +52,7 @@
 
         <div class="ah-seo-card-footer">
             <span class="ah-seo-card-price">{{ number_format($product->price, 0, '.', ' ') }} ₸</span>
-            <a href="{{ $url }}" class="ah-button ah-button-primary ah-seo-card-cta">Посмотреть товар</a>
+            <a href="{{ $url }}" class="ah-button ah-button-orange ah-seo-card-cta">Посмотреть товар</a>
         </div>
     </div>
 </article>

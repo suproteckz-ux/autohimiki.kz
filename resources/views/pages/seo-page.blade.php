@@ -1,11 +1,9 @@
 @extends('layouts.app')
 
 @php
-    $entity = $page ?? $filter ?? null;
-
-    // SEO-страница (article layout) vs SEO-фильтр (plain product grid)
+    $entity    = $page ?? $filter ?? null;
     $isArticle = isset($page);
-    $products   = $isArticle
+    $products  = $isArticle
         ? ($page->products ?? collect())
         : ($products ?? collect());
 @endphp
@@ -31,7 +29,6 @@
 
 @push('scripts')
 <style>
-/* FAQ chevron — CSS-only toggle */
 details[open] .ah-faq-chev { transform: rotate(45deg); }
 </style>
 @endpush
@@ -39,7 +36,7 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
 @section('content')
 
 {{-- ═══════════════════════════════════════════════════════════════
-     ARTICLE LAYOUT — для SEO-страниц (isset $page)
+     ARTICLE LAYOUT — SEO-страницы (isset $page)
 ════════════════════════════════════════════════════════════════ --}}
 @if($isArticle)
 
@@ -50,22 +47,14 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
     $readingMinutes = max(1, (int) ceil($wordCount / 200));
     $categories     = $page->categories ?? collect();
     $faqItems       = is_array($page->faq) ? $page->faq : [];
+    $hasHeroImage   = !empty($page->hero_image);
 
     // Auto-extract h2 headings with id from seo_text for TOC
     $toc = [];
     if ($page->seo_text) {
-        preg_match_all('/<h2[^>]*\sid=["\']([^"\']+)["\'][^>]*>(.*?)<\/h2>/si', $page->seo_text, $m);
-        if (!empty($m[1])) {
-            foreach ($m[1] as $i => $id) {
-                $toc[] = ['id' => $id, 'text' => strip_tags($m[2][$i])];
-            }
-        }
-        // Also check id before h2 tag
-        if (empty($toc)) {
-            preg_match_all('/<h2[^>]*id=["\']([^"\']+)["\'][^>]*>(.*?)<\/h2>/si', $page->seo_text, $m2);
-            foreach ($m2[1] ?? [] as $i => $id) {
-                $toc[] = ['id' => $id, 'text' => strip_tags($m2[2][$i])];
-            }
+        preg_match_all('/<h2[^>]*id=["\']([^"\']+)["\'][^>]*>(.*?)<\/h2>/si', $page->seo_text, $m);
+        foreach ($m[1] ?? [] as $i => $id) {
+            $toc[] = ['id' => $id, 'text' => strip_tags($m[2][$i])];
         }
     }
     if ($products->isNotEmpty()) {
@@ -74,110 +63,172 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
     if (!empty($faqItems)) {
         $toc[] = ['id' => 'faq', 'text' => 'Частые вопросы'];
     }
+
+    // CTA fields with fallbacks
+    $ctaLink    = $page->cta_link
+        ?: ($categories->isNotEmpty() ? url('/catalog/' . $categories->first()->slug) : route('catalog'));
+    $ctaText    = $page->cta_button_text    ?: 'Перейти в каталог';
+    $ctaHeading = $page->cta_heading        ?: 'Товары в наличии в Алматы';
+    $ctaDesc    = $page->cta_description    ?: 'Доставка по Алматы и Казахстану. Бесплатная консультация по подбору.';
 @endphp
 
-<div class="ah-article-page">
-  <div class="ah-container">
+<div class="ah-seoart-page">
 
-    {{-- ── Hero ───────────────────────────────────────────────── --}}
-    <div class="ah-article-hero">
-      <div class="ah-article-hero-content">
-        <h1 class="ah-article-title">{{ $page->seoH1() }}</h1>
-        @if($page->intro)
-          <p class="ah-article-intro">{{ $page->intro }}</p>
-        @endif
-        <div class="ah-article-meta">
-          @if($updatedAt)
-            <span>Обновлено: {{ $updatedAt }}</span>
-            <span aria-hidden="true">·</span>
+  {{-- ── Dark Hero ──────────────────────────────────────────────── --}}
+  <div class="ah-seoart-hero{{ $hasHeroImage ? ' ah-seoart-hero--has-image' : '' }}">
+    <div class="ah-container">
+      <div class="ah-seoart-hero-inner">
+
+        <div class="ah-seoart-hero-body">
+          @if($page->hero_label)
+            <span class="ah-seoart-hero-label">{{ $page->hero_label }}</span>
           @endif
-          <span>{{ $readingMinutes }}&nbsp;мин. чтения</span>
-        </div>
-      </div>
 
+          <h1 class="ah-seoart-hero-title">{{ $page->seoH1() }}</h1>
+
+          @if($page->intro)
+            <p class="ah-seoart-hero-intro">{{ $page->intro }}</p>
+          @endif
+
+          <div class="ah-seoart-hero-meta">
+            @if($updatedAt)
+              <span>Обновлено: {{ $updatedAt }}</span>
+              <span class="ah-seoart-hero-meta-sep" aria-hidden="true">·</span>
+            @endif
+            <span>{{ $readingMinutes }}&nbsp;мин. чтения</span>
+          </div>
+        </div>
+
+        @if($hasHeroImage)
+        <div class="ah-seoart-hero-image">
+          <img src="{{ asset('storage/' . $page->hero_image) }}"
+               alt="{{ $page->hero_image_alt ?: $page->seoH1() }}"
+               loading="eager"
+               width="520" height="346">
+        </div>
+        @endif
+
+      </div>
+    </div>
+  </div>
+
+  {{-- ── Two-column: article + sticky sidebar ─────────────────── --}}
+  <div class="ah-container">
+    <div class="ah-seoart-grid">
+
+      {{-- Main article column --}}
+      <div class="ah-seoart-content">
+
+        @if($page->seo_text)
+        <article class="ah-seoart-body" id="article-body">
+          {!! $page->seo_text !!}
+        </article>
+        @endif
+
+        {{-- Related products --}}
+        @if($products->isNotEmpty())
+        <section id="tovary" class="ah-seoart-section" aria-labelledby="products-heading" style="scroll-margin-top:24px">
+          <div class="ah-seoart-section-header">
+            <h2 id="products-heading">Рекомендуемые товары</h2>
+            @if($categories->isNotEmpty())
+              <a href="{{ url('/catalog/' . $categories->first()->slug) }}">Все в каталоге →</a>
+            @endif
+          </div>
+          <div class="ah-seo-product-grid">
+            @foreach($products as $product)
+              <x-product.seo-card :product="$product" />
+            @endforeach
+          </div>
+        </section>
+        @endif
+
+        {{-- Comparison block --}}
+        @if($page->show_comparison && $products->count() >= 2)
+        <section class="ah-seoart-section ah-seoart-compare">
+          <div class="ah-seoart-section-header">
+            <h2>Сравнение товаров</h2>
+          </div>
+          <div class="ah-seoart-compare-grid">
+            @foreach($products->take(4) as $product)
+            <div class="ah-seoart-compare-card">
+              <div class="ah-seoart-compare-img">
+                @if($product->images->isNotEmpty())
+                  <img src="{{ asset('storage/' . $product->images->first()->path) }}"
+                       alt="{{ $product->name }}" loading="lazy">
+                @else
+                  <span class="ah-placeholder">Нет фото</span>
+                @endif
+              </div>
+              <div class="ah-seoart-compare-body">
+                <p class="ah-seoart-compare-name">
+                  <a href="{{ url($product->url ?? '/products/' . $product->slug) }}">{{ $product->name }}</a>
+                </p>
+                <p class="ah-seoart-compare-price">{{ number_format($product->price, 0, '.', ' ') }}&nbsp;₸</p>
+              </div>
+            </div>
+            @endforeach
+          </div>
+        </section>
+        @endif
+
+        {{-- FAQ --}}
+        @if(!empty($faqItems))
+        <section id="faq" class="ah-seoart-section ah-seoart-faq-section" aria-labelledby="faq-heading" style="scroll-margin-top:24px">
+          <h2 id="faq-heading">Частые вопросы</h2>
+          <div class="ah-article-faq">
+            @foreach($faqItems as $i => $item)
+            @php
+                $q = $item['question'] ?? $item['q'] ?? '';
+                $a = $item['answer']   ?? $item['a'] ?? '';
+            @endphp
+            @if($q)
+            <details @if($i === 0) open @endif>
+              <summary>
+                <h3>{{ $q }}</h3>
+                <span class="ah-faq-chev" aria-hidden="true">+</span>
+              </summary>
+              <div class="ah-article-faq-answer">{{ $a }}</div>
+            </details>
+            @endif
+            @endforeach
+          </div>
+        </section>
+        @endif
+
+      </div>{{-- .ah-seoart-content --}}
+
+      {{-- Sticky sidebar with TOC --}}
       @if(!empty($toc))
-      <aside class="ah-article-toc" aria-labelledby="toc-title">
-        <p id="toc-title" class="ah-article-toc-label">Содержание</p>
-        <ul>
-          @foreach($toc as $item)
-          <li>
-            <a href="#{{ $item['id'] }}">
-              {{ $item['text'] }}<span aria-hidden="true">→</span>
-            </a>
-          </li>
-          @endforeach
-        </ul>
+      <aside class="ah-seoart-sidebar" aria-labelledby="toc-title">
+        <div class="ah-seoart-toc">
+          <p id="toc-title" class="ah-seoart-toc-label">Содержание</p>
+          <ul>
+            @foreach($toc as $item)
+            <li>
+              <a href="#{{ $item['id'] }}">{{ $item['text'] }}<span aria-hidden="true">→</span></a>
+            </li>
+            @endforeach
+          </ul>
+        </div>
       </aside>
       @endif
-    </div>
 
-    {{-- ── Article body ────────────────────────────────────────── --}}
-    @if($page->seo_text)
-    <article class="ah-article-body" id="article-body">
-      {!! $page->seo_text !!}
-    </article>
-    @endif
+    </div>{{-- .ah-seoart-grid --}}
 
-    {{-- ── Related products ───────────────────────────────────── --}}
-    @if($products->isNotEmpty())
-    <section id="tovary" class="ah-article-section" aria-labelledby="products-heading" style="scroll-margin-top:24px">
-      <div class="ah-article-section-header">
-        <h2 id="products-heading">Рекомендуемые товары</h2>
-        @if($categories->isNotEmpty())
-          <a href="{{ url('/catalog/' . $categories->first()->slug) }}">Все в каталоге →</a>
-        @endif
+    {{-- Dark CTA footer --}}
+    <section class="ah-seoart-cta" aria-labelledby="cta-section-heading">
+      <div class="ah-seoart-cta-body">
+        <h2 id="cta-section-heading">{{ $ctaHeading }}</h2>
+        <p>{{ $ctaDesc }}</p>
       </div>
-      <div class="ah-seo-product-grid">
-        @foreach($products as $product)
-          <x-product.seo-card :product="$product" />
-        @endforeach
-      </div>
-    </section>
-    @endif
-
-    {{-- ── FAQ ──────────────────────────────────────────────────── --}}
-    @if(!empty($faqItems))
-    <section id="faq" class="ah-article-section ah-article-faq-section" aria-labelledby="faq-heading" style="scroll-margin-top:24px">
-      <h2 id="faq-heading">Частые вопросы</h2>
-      <div class="ah-article-faq">
-        @foreach($faqItems as $i => $item)
-        @php
-            $q = $item['question'] ?? $item['q'] ?? '';
-            $a = $item['answer']   ?? $item['a'] ?? '';
-        @endphp
-        @if($q)
-        <details @if($i === 0) open @endif>
-          <summary>
-            <h3>{{ $q }}</h3>
-            <span class="ah-faq-chev" aria-hidden="true">+</span>
-          </summary>
-          <div class="ah-article-faq-answer">{{ $a }}</div>
-        </details>
-        @endif
-        @endforeach
-      </div>
-    </section>
-    @endif
-
-    {{-- ── CTA banner ───────────────────────────────────────────── --}}
-    @php
-        $ctaHref  = $categories->isNotEmpty()
-            ? url('/catalog/' . $categories->first()->slug)
-            : route('catalog');
-    @endphp
-    <section class="ah-article-cta" aria-labelledby="cta-heading">
-      <div>
-        <h2 id="cta-heading">Товары в наличии в Алматы</h2>
-        <p>Доставка по Алматы и Казахстану. Бесплатная консультация по подбору.</p>
-      </div>
-      <a href="{{ $ctaHref }}" class="ah-button ah-button-primary">Перейти в каталог</a>
+      <a href="{{ $ctaLink }}" class="ah-button ah-button-orange">{{ $ctaText }}</a>
     </section>
 
   </div>{{-- .ah-container --}}
-</div>{{-- .ah-article-page --}}
+</div>{{-- .ah-seoart-page --}}
 
 {{-- ═══════════════════════════════════════════════════════════════
-     FILTER LAYOUT — для SEO-фильтров (isset $filter)
+     FILTER LAYOUT — SEO-фильтры (isset $filter)
 ════════════════════════════════════════════════════════════════ --}}
 @else
 

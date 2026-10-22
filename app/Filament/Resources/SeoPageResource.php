@@ -8,6 +8,7 @@ use App\Filament\Resources\SeoPageResource\Pages\ListSeoPages;
 use App\Filament\Traits\HasFaqRepeater;
 use App\Filament\Traits\HasSeoFields;
 use App\Models\SeoPage;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\RichEditor;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
@@ -65,7 +66,7 @@ class SeoPageResource extends Resource
                             ->maxLength(255)
                             ->columnSpanFull(),
                         Textarea::make('intro')
-                            ->label('Вводный абзац (под H1)')
+                            ->label('Вводный абзац (под H1, до 300 символов)')
                             ->rows(3)
                             ->maxLength(500)
                             ->columnSpanFull(),
@@ -81,7 +82,31 @@ class SeoPageResource extends Resource
                             ->columnSpanFull(),
                     ]),
 
-                Section::make('Связанные товары')
+                Section::make('Визуальное оформление')
+                    ->description('Hero-блок: изображение, метка и кнопки CTA')
+                    ->collapsible()
+                    ->collapsed()
+                    ->schema([
+                        FileUpload::make('hero_image')
+                            ->label('Hero-изображение')
+                            ->helperText('Рекомендуемый размер: 900×600 px, JPG/WebP')
+                            ->image()
+                            ->disk('public')
+                            ->directory('seo/hero')
+                            ->imagePreviewHeight('180')
+                            ->columnSpanFull(),
+                        TextInput::make('hero_image_alt')
+                            ->label('Alt изображения')
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+                        TextInput::make('hero_label')
+                            ->label('Метка hero (например: «Советы по автохимии»)')
+                            ->maxLength(120)
+                            ->placeholder('Советы по автохимии')
+                            ->columnSpanFull(),
+                    ]),
+
+                Section::make('Связанные товары и сравнение')
                     ->schema([
                         Select::make('products')
                             ->label('Товары (отображаются в блоке «Рекомендуемые»)')
@@ -90,9 +115,40 @@ class SeoPageResource extends Resource
                             ->searchable()
                             ->preload()
                             ->columnSpanFull(),
+                        Toggle::make('show_comparison')
+                            ->label('Показывать блок сравнения товаров')
+                            ->helperText('Отображается только если выбрано 2+ товара')
+                            ->default(false),
                     ]),
 
                 static::faqRepeater(),
+
+                Section::make('Коммерческий блок (нижний CTA)')
+                    ->description('Тёмный призыв к действию в конце страницы')
+                    ->collapsible()
+                    ->collapsed()
+                    ->columns(2)
+                    ->schema([
+                        TextInput::make('cta_heading')
+                            ->label('Заголовок CTA')
+                            ->maxLength(255)
+                            ->placeholder('Готовы подготовить автомобиль к зиме?')
+                            ->columnSpanFull(),
+                        Textarea::make('cta_description')
+                            ->label('Описание CTA')
+                            ->rows(2)
+                            ->maxLength(500)
+                            ->columnSpanFull(),
+                        TextInput::make('cta_link')
+                            ->label('Ссылка кнопки CTA')
+                            ->maxLength(500)
+                            ->placeholder('https://autohimiki.kz/catalog/antigel-dlya-dizelnogo-topliva')
+                            ->url(),
+                        TextInput::make('cta_button_text')
+                            ->label('Текст кнопки CTA')
+                            ->maxLength(100)
+                            ->placeholder('Смотреть все антигели'),
+                    ]),
 
                 static::seoSection(),
             ]);
@@ -159,15 +215,15 @@ class SeoPageResource extends Resource
                 TextInput::make('meta_title')
                     ->label('Meta Title')
                     ->live(debounce: 300)
-                    ->hint(fn ($state) => strlen($state ?? '') . ' / 60')
-                    ->hintColor(fn ($state) => strlen($state ?? '') > 60 ? 'danger' : 'gray')
+                    ->hint(fn ($state) => mb_strlen($state ?? '') . ' / 60 симв.')
+                    ->hintColor(fn ($state) => mb_strlen($state ?? '') > 60 ? 'warning' : 'gray')
                     ->maxLength(255)
                     ->columnSpanFull(),
                 Textarea::make('meta_description')
                     ->label('Meta Description')
                     ->live(debounce: 300)
-                    ->hint(fn ($state) => strlen($state ?? '') . ' / 160')
-                    ->hintColor(fn ($state) => strlen($state ?? '') > 160 ? 'danger' : 'gray')
+                    ->hint(fn ($state) => mb_strlen($state ?? '') . ' / 160 симв.')
+                    ->hintColor(fn ($state) => mb_strlen($state ?? '') > 160 ? 'warning' : 'gray')
                     ->rows(3)
                     ->maxLength(500)
                     ->columnSpanFull(),
@@ -175,6 +231,8 @@ class SeoPageResource extends Resource
                     ->label('Canonical URL')
                     ->url()
                     ->maxLength(500)
+                    ->placeholder('https://autohimiki.kz/antigel-dlya-dizelnogo-topliva')
+                    ->helperText('Оставьте пустым — система сформирует автоматически по slug')
                     ->columnSpanFull(),
             ]);
     }

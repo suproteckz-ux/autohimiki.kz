@@ -187,11 +187,21 @@ class PublicPagesSmokeTest extends TestCase
             $table->string('title');
             $table->string('slug')->unique();
             $table->string('h1')->nullable();
+            $table->text('intro')->nullable();
             $table->string('meta_title')->nullable();
             $table->string('meta_description', 500)->nullable();
             $table->longText('seo_text')->nullable();
             $table->json('faq')->nullable();
             $table->boolean('is_active')->default(true);
+            $table->string('canonical_url')->nullable();
+            $table->string('hero_image')->nullable();
+            $table->string('hero_image_alt', 255)->nullable();
+            $table->string('hero_label', 120)->nullable();
+            $table->string('cta_heading', 255)->nullable();
+            $table->string('cta_description', 500)->nullable();
+            $table->string('cta_link', 500)->nullable();
+            $table->string('cta_button_text', 100)->nullable();
+            $table->boolean('show_comparison')->default(false);
             $table->timestamps();
         });
 

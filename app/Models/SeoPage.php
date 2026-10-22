@@ -16,6 +16,7 @@ class SeoPage extends Model
     protected $casts = [
         'faq' => 'array',
         'is_active' => 'boolean',
+        'show_comparison' => 'boolean',
     ];
 
     public function products(): BelongsToMany
