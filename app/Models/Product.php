@@ -3,11 +3,13 @@
 namespace App\Models;
 
 use App\Models\Traits\SeoMetaTrait;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Validation\ValidationException;
 
 class Product extends Model
 {
@@ -23,7 +25,7 @@ class Product extends Model
                     || (bool) $current->is_active !== (bool) $this->getRawOriginal('is_active')
                     || $current->name !== $this->getRawOriginal('name')
                     || $current->canonical_url !== $this->getRawOriginal('canonical_url')) {
-                    throw \Illuminate\Validation\ValidationException::withMessages(['slug' => 'Товар изменился. Обновите страницу.']);
+                    throw ValidationException::withMessages(['slug' => 'Товар изменился. Обновите страницу.']);
                 }
             }
             if (! parent::save($options)) {
@@ -49,13 +51,13 @@ class Product extends Model
 
     protected $casts = [
         'attributes' => 'array',
-        'faq'        => 'array',
-        'price'      => 'decimal:2',
-        'old_price'  => 'decimal:2',
-        'in_stock'   => 'boolean',
-        'is_active'  => 'boolean',
-        'is_new'     => 'boolean',
-        'is_hit'     => 'boolean',
+        'faq' => 'array',
+        'price' => 'decimal:2',
+        'old_price' => 'decimal:2',
+        'in_stock' => 'boolean',
+        'is_active' => 'boolean',
+        'is_new' => 'boolean',
+        'is_hit' => 'boolean',
         'is_popular' => 'boolean',
     ];
 
@@ -66,20 +68,31 @@ class Product extends Model
 
     protected function defaultSeoTitle(): string
     {
-        $name = $this->attributes['name'] ?? '';
+        $name = $this->cleanSeoText($this->attributes['name'] ?? '');
+
         return "{$name} купить в Алматы | Autohimiki.kz";
     }
 
     protected function defaultSeoDescription(): string
     {
-        $name  = $this->attributes['name'] ?? '';
+        $name = $this->cleanSeoText($this->attributes['name'] ?? '');
         $price = number_format((float) ($this->attributes['price'] ?? 0), 0, '.', ' ');
+
         return "Купить {$name} в Алматы. Цена {$price} тг. Наличие, консультация. Доставка по Казахстану.";
     }
 
     protected function defaultSeoH1(): string
     {
         return $this->attributes['name'] ?? '';
+    }
+
+    private function cleanSeoText(string $text): string
+    {
+        $text = strip_tags(html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        // Remove emoji (Unicode symbols outside Basic Multilingual Plane)
+        $text = preg_replace('/[\x{1F000}-\x{1FFFF}]/u', '', $text);
+
+        return trim($text);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -91,7 +104,7 @@ class Product extends Model
         return $this->belongsTo(Category::class);
     }
 
-    public function ozonLink(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function ozonLink(): HasOne
     {
         return $this->hasOne(OzonProductLink::class, 'local_product_id');
     }
@@ -163,6 +176,7 @@ class Product extends Model
         if ($max !== null) {
             $query->where('price', '<=', $max);
         }
+
         return $query;
     }
 
@@ -185,6 +199,7 @@ class Product extends Model
         if (! $this->hasDiscount()) {
             return 0;
         }
+
         return (int) round((1 - $this->price / $this->old_price) * 100);
     }
 

@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\ProductResource\Pages\CreateProduct;
 use App\Filament\Resources\ProductResource\Pages\EditProduct;
 use App\Filament\Resources\ProductResource\Pages\ListProducts;
+use App\Filament\Traits\HasSeoFields;
 use App\Models\Category;
 use App\Models\Product;
 use Filament\Actions\Action;
@@ -32,11 +33,14 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Throwable;
 
 class ProductResource extends Resource
 {
+    use HasSeoFields;
+
     protected static ?string $model = Product::class;
 
     protected static ?string $modelLabel = 'товар';
@@ -88,6 +92,7 @@ class ProductResource extends Resource
                         Textarea::make('short_description')->label('Краткое описание')->rows(3),
                         Textarea::make('description')->label('Описание')->rows(8),
                     ]),
+                static::seoSection(),
             ]);
     }
 
@@ -279,7 +284,7 @@ class ProductResource extends Resource
     {
         // Query updates skip publication/URL safeguards. Include every model's
         // readable slug and 301 history in the same transaction.
-        $count = \Illuminate\Support\Facades\DB::transaction(function () use ($records, $active): int {
+        $count = DB::transaction(function () use ($records, $active): int {
             foreach ($records->sortBy('id') as $record) {
                 $record->update(['is_active' => $active]);
             }
