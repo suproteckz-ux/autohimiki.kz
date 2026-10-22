@@ -346,12 +346,12 @@ class PublicPagesSmokeTest extends TestCase
         $this->assertNotEmpty($this->seoPage->title);
         $bufferLevel = ob_get_level();
         $this->get("/{$this->seoPage->slug}")->assertOk()
-            ->assertSee('<title>'.e($this->seoPage->title).'</title>', false);
+            ->assertSee('<title>'.e($this->seoPage->seoTitle()).'</title>', false);
         $this->assertSame($bufferLevel, ob_get_level(), 'SEO page must close its output buffers');
 
         $this->assertNull($this->seoFilter->meta_title);
         $this->get("/{$this->category->slug}/{$this->brand->slug}")->assertOk()
-            ->assertSee('<title>'.e($this->seoFilter->name).'</title>', false);
+            ->assertSee('<title>'.e($this->seoFilter->seoTitle()).'</title>', false);
         $this->assertSame($bufferLevel, ob_get_level(), 'SEO filter must close its output buffers');
     }
 
