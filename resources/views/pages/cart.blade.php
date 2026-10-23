@@ -2,6 +2,12 @@
 @section('title', 'Корзина — Autohimiki.kz')
 @section('noindex', '1')
 @section('content')
+@php
+    // Show 2 decimal places only when there are actual cents; strip .00
+    $fmtMoney = static function(float $v): string {
+        return number_format($v, fmod($v, 1.0) < 0.001 ? 0 : 2, '.', ' ');
+    };
+@endphp
 <div class="ah-container ah-commerce">
     <h1>Корзина</h1>
     @include('components.ui.cart-feedback')
@@ -28,7 +34,7 @@
             <div class="ah-cart-description">
                 <h2>@if($item['product']?->is_active)<a href="{{ $item['product']->url }}">{{ $item['product']->name }}</a>@else{{ $item['product']?->name ?? 'Товар удалён' }}@endif</h2>
                 <p>SKU: {{ $item['product']?->sku ?? '—' }}</p>
-                <p>{{ number_format((float) ($item['product']?->price ?? 0), 2, '.', ' ') }} ₸ / шт.</p>
+                <p>{{ $fmtMoney((float)($item['product']?->price ?? 0)) }} ₸ / шт.</p>
                 @if(!$item['valid'])<p class="ah-cart-error" role="alert">Товар недоступен или остаток изменился. Доступно: {{ $item['product']?->is_active ? $item['product']->quantity : 0 }}. Измените количество или удалите товар.</p>@endif
             </div>
             <div class="ah-cart-controls">
@@ -40,13 +46,13 @@
                     <button type="submit" name="quantity" value="{{ $item['quantity'] + 1 }}" aria-label="Увеличить количество {{ $item['product']->name }}" @disabled($item['quantity'] >= $item['product']->quantity)>+</button>
                 </form>
                 @else<p>Количество: {{ $item['quantity'] }}</p>@endif
-                <strong>{{ number_format($item['subtotal'] / 100, 2, '.', ' ') }} ₸</strong>
+                <strong>{{ $fmtMoney($item['subtotal'] / 100) }} ₸</strong>
                 <form method="POST" action="{{ route('cart.destroy', $item['id']) }}">@csrf @method('DELETE')<button class="ah-cart-remove" type="submit">Удалить</button></form>
             </div>
         </article>
     @endforeach
     </div>
-    <div class="ah-cart-total"><strong>Итого: {{ number_format($total / 100, 2, '.', ' ') }} ₸</strong><p>Стоимость доставки уточняется отдельно. Самовывоз — бесплатно.</p></div>
+    <div class="ah-cart-total"><strong>Итого: {{ $fmtMoney($total / 100) }} ₸</strong><p>Стоимость доставки уточняется отдельно. Самовывоз — бесплатно.</p></div>
     <div class="ah-commerce-actions">
         @if($available)<a class="ah-button ah-button-orange" href="{{ route('checkout.index') }}">Оформить заказ</a>@else<p class="ah-cart-error">Для оформления исправьте недоступные позиции.</p>@endif
         <a class="ah-button" href="{{ route('catalog') }}">Продолжить покупки</a>

@@ -19,7 +19,6 @@
             <div class="ah-hero-actions"><a class="ah-button ah-button-orange" href="{{ route('catalog') }}">Перейти в каталог <span aria-hidden="true">→</span></a>
                 @if($hits->count())<a class="ah-hero-secondary" href="#home-hits">Популярные товары</a>@endif
             </div>
-            <div class="ah-stats">@foreach([['800+', 'товаров'], ['30+', 'брендов'], ['5 лет', 'на рынке']] as [$value, $label])<div><strong>{{ $value }}</strong><span>{{ $label }}</span></div>@endforeach</div>
         </div>
         <div class="ah-hero-visual">
             <picture class="ah-hero-media">
@@ -42,7 +41,7 @@
 @if($hits->count())
 <section class="ah-section" id="home-hits"><div class="ah-container">
     <x-ui.section-heading title="Хиты продаж" :href="route('catalog')" />
-    <div class="ah-product-grid ah-home-product-grid">@foreach($hits as $product)<x-product.card :product="$product" variant="handoff" />@endforeach</div>
+    <div class="ah-product-grid ah-home-product-grid">@foreach($hits as $product)<x-product.card :product="$product" layout="grid" />@endforeach</div>
 </div></section>
 @endif
 <section class="ah-trust" id="advantages"><div class="ah-container ah-trust-grid">

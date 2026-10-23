@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', 'Catalog | Autohimiki.kz')
+@section('title', 'Каталог товаров | Autohimiki.kz')
 @section('canonical')
 <link rel="canonical" href="{{ $canonical }}">
 @endsection
