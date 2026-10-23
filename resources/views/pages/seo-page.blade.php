@@ -124,6 +124,9 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
             @endif
             <span>{{ $readingMinutes }}&nbsp;мин. чтения</span>
           </div>
+          <div class="ah-seoart-hero-actions">
+            <a href="{{ $ctaLink }}" class="ah-button ah-button-orange">{{ $ctaText }}</a>
+          </div>
         </div>
 
         @if($hasHeroImage)
@@ -284,9 +287,9 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
       {{-- Sticky sidebar with TOC (collapsible on mobile) --}}
       @if(!empty($toc))
       <aside class="ah-seoart-sidebar" aria-labelledby="toc-title">
-        <details class="ah-seoart-toc" open>
+        <details class="ah-seoart-toc">
           <summary class="ah-seoart-toc-summary" id="toc-title">
-            Содержание
+            Содержание статьи
             <span class="ah-seoart-toc-chev" aria-hidden="true">▾</span>
           </summary>
           <ul>
