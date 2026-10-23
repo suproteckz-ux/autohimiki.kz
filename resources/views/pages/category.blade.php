@@ -67,20 +67,21 @@
 
                 <p class="ah-results-count">Найдено <strong>{{ $products->total() }}</strong> {{ trans_choice('товар|товара|товаров', $products->total()) }}</p>
 
-                <label class="ah-sort-control">
-                    <span>Сортировка</span>
-                    <select aria-label="Сортировка товаров" onchange="window.location = this.value">
-                        @foreach([
-                            'default' => 'По умолчанию',
-                            'price_asc' => 'Сначала дешевле',
-                            'price_desc' => 'Сначала дороже',
-                            'new' => 'Сначала новые',
-                            'popular' => 'Популярные',
-                        ] as $val => $label)
-                            <option value="{{ request()->fullUrlWithQuery(['sort' => $val, 'page' => null]) }}" {{ ($sort ?? 'default') === $val ? 'selected' : '' }}>{{ $label }}</option>
-                        @endforeach
-                    </select>
-                </label>
+                <div class="ah-sort-links" aria-label="Сортировка товаров">
+                    @foreach([
+                        'default'    => 'По умолчанию',
+                        'price_asc'  => 'Дешевле',
+                        'price_desc' => 'Дороже',
+                        'new'        => 'Новые',
+                        'popular'    => 'Популярные',
+                    ] as $val => $sortLabel)
+                        <a href="{{ request()->fullUrlWithQuery(['sort' => $val, 'page' => null]) }}"
+                           class="{{ ($sort ?? 'default') === $val ? 'is-active' : '' }}"
+                           @if(($sort ?? 'default') === $val) aria-current="true" @endif>
+                            {{ $sortLabel }}
+                        </a>
+                    @endforeach
+                </div>
             </div>
 
             @if($filterCount)

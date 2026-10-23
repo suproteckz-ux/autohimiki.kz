@@ -160,23 +160,29 @@
                 @endif
             </div>
 
-            {{-- Кнопки покупки --}}
-            <div class="ah-detail-actions">
+            {{-- Кнопки покупки (корзина первая, WhatsApp вторая) --}}
+            <div class="ah-detail-actions" id="detail-actions">
+                <form method="POST" action="{{ route('cart.store') }}" class="ah-add-to-cart" id="main-add-to-cart">
+                    @csrf
+                    <input type="hidden" name="product_id" value="{{ $product->id }}">
+                    <button type="submit" class="ah-button ah-button-orange"
+                            @disabled(!$product->is_active || $product->quantity <= 0)>
+                        {{ $product->is_active && $product->quantity > 0 ? 'Добавить в корзину' : 'Нет в наличии' }}
+                    </button>
+                </form>
                 @if($wa)
                 <a href="https://wa.me/{{ $wa }}?text={{ urlencode('Хочу заказать: ' . $product->name . ' - ' . url()->current()) }}"
                    target="_blank" rel="noopener"
-                   class="ah-button ah-detail-wa">
-                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413z"/>
+                   class="ah-detail-wa"
+                   aria-label="Купить {{ $product->name }} через WhatsApp">
+                    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2.5"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
                     </svg>
                     Купить через WhatsApp
                 </a>
                 @endif
-                <form method="POST" action="{{ route('cart.store') }}" class="ah-add-to-cart">
-                    @csrf
-                    <input type="hidden" name="product_id" value="{{ $product->id }}">
-                    <button type="submit" class="ah-button ah-button-orange" @disabled(!$product->is_active || $product->quantity <= 0)>{{ $product->is_active && $product->quantity > 0 ? 'Добавить в корзину' : 'Нет в наличии' }}</button>
-                </form>
             </div>
             @include('components.ui.cart-feedback')
 
@@ -264,7 +270,54 @@
     @endif
 </div>
 </div>
+
+{{-- Buy bar — Variant C: visible on mobile when main CTA scrolls out of view --}}
+<div class="ah-buy-bar" id="product-buy-bar" aria-label="Быстрая покупка" role="region">
+    <div class="ah-buy-bar__info">
+        <div class="ah-buy-bar__price">{{ number_format($product->price, 0, '.', ' ') }} ₸</div>
+        <div class="ah-buy-bar__stock {{ $product->is_active && $product->quantity > 0 ? 'is-in' : 'is-out' }}">
+            {{ $product->is_active && $product->quantity > 0 ? 'В наличии' : 'Нет в наличии' }}
+        </div>
+    </div>
+    @if($wa)
+    <a href="https://wa.me/{{ $wa }}?text={{ urlencode('Хочу заказать: ' . $product->name . ' - ' . url()->current()) }}"
+       target="_blank" rel="noopener" class="ah-buy-bar__wa" aria-label="WhatsApp">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+    </a>
+    @endif
+    <form method="POST" action="{{ route('cart.store') }}" class="ah-add-to-cart">
+        @csrf
+        <input type="hidden" name="product_id" value="{{ $product->id }}">
+        <button type="submit" class="ah-button ah-button-orange"
+                @disabled(!$product->is_active || $product->quantity <= 0)>
+            В корзину
+        </button>
+    </form>
+</div>
 @endsection
+
+@push('scripts')
+<script>
+(function () {
+    var cta    = document.getElementById('main-add-to-cart');
+    var buyBar = document.getElementById('product-buy-bar');
+    if (!cta || !buyBar || !window.IntersectionObserver) return;
+    var obs = new IntersectionObserver(function (entries) {
+        var hidden = !entries[0].isIntersecting;
+        buyBar.classList.toggle('is-visible', hidden);
+        document.body.classList.toggle('buy-bar-active', hidden);
+    }, { threshold: 0 });
+    obs.observe(cta);
+    var baseVH = window.innerHeight;
+    window.addEventListener('resize', function () {
+        document.body.classList.toggle('keyboard-open', baseVH - window.innerHeight > 120);
+    });
+}());
+</script>
+@endpush
 
 @section('schema')
 @php
