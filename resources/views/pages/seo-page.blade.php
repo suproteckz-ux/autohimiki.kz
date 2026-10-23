@@ -171,6 +171,18 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
 
         {{-- Comparison table --}}
         @if($page->show_comparison && $products->count() >= 2)
+        @php
+          // Only show Characteristics column when at least one product has real attributes
+          $anyHasAttrs = $products->take(6)->contains(function ($p) {
+            $raw = is_array($p->attributes) ? $p->attributes : [];
+            foreach (array_slice($raw, 0, 2, true) as $key => $val) {
+              $k = is_array($val) ? ($val['name'] ?? $val['k'] ?? '') : (is_string($key) ? $key : '');
+              $v = is_array($val) ? ($val['value'] ?? $val['v'] ?? '') : (is_string($val) ? $val : '');
+              if ($k !== '' && $v !== '') return true;
+            }
+            return false;
+          });
+        @endphp
         <section class="ah-seoart-section ah-seoart-compare">
           <div class="ah-seoart-section-header">
             <h2>Сравнение товаров</h2>
@@ -180,7 +192,7 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
               <thead>
                 <tr>
                   <th>Товар</th>
-                  <th>Характеристики</th>
+                  @if($anyHasAttrs)<th>Характеристики</th>@endif
                   <th>Цена</th>
                   <th>Наличие</th>
                 </tr>
@@ -218,15 +230,17 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
                       </div>
                     </div>
                   </td>
+                  @if($anyHasAttrs)
                   <td>
                     @if($cmpAttrs)
                       @foreach($cmpAttrs as $cmpAttr)
                         <p class="ah-cmp-spec"><span>{{ $cmpAttr['k'] }}:</span> {{ $cmpAttr['v'] }}</p>
                       @endforeach
                     @else
-                      <span class="ah-cmp-na">Не указано</span>
+                      <span class="ah-cmp-na">—</span>
                     @endif
                   </td>
+                  @endif
                   <td><span class="ah-cmp-price">{{ number_format($cmpProduct->price, 0, '.', ' ') }}&nbsp;₸</span></td>
                   <td>
                     <span @class(['ah-cmp-stock', 'is-in' => $cmpProduct->in_stock])>
