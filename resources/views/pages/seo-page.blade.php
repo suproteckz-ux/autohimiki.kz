@@ -46,9 +46,14 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
     $faqItems     = is_array($page->faq) ? $page->faq : [];
     $hasHeroImage = !empty($page->hero_image);
 
-    // Decode HTML entities: Filament/DB may store &lt;h2&gt; instead of <h2>
+    // 1. Decode HTML entities: Filament/DB may store &lt;h2&gt; instead of <h2>
+    // 2. Sanitize with Filament's Str::sanitizeHtml() (Symfony HtmlSanitizer):
+    //    strips <script>, onclick/on*, javascript: hrefs — preserves id attributes
+    //    needed for TOC anchors. Filament's own comment: "Never use {!! !!} unsanitized."
     $seoText = $page->seo_text
-        ? html_entity_decode($page->seo_text, ENT_QUOTES | ENT_HTML5, 'UTF-8')
+        ? \Illuminate\Support\Str::sanitizeHtml(
+            html_entity_decode($page->seo_text, ENT_QUOTES | ENT_HTML5, 'UTF-8')
+        )
         : null;
 
     $plainText      = strip_tags(($page->intro ?? '') . ' ' . ($seoText ?? ''));

@@ -343,4 +343,115 @@ class SeoPagePublicTest extends TestCase
         $this->assertStringContainsString('Товар 2', $html);
         $this->assertStringContainsString('Сравнение товаров', $html);
     }
+
+    // ── Security: XSS prevention in seo_text output ───────────────────────────
+
+    public function test_seo_text_script_tag_is_stripped(): void
+    {
+        DB::table('seo_pages')->insert([
+            'title'     => 'XSS script test',
+            'slug'      => 'xss-script',
+            'seo_text'  => '<h2>Легальный заголовок</h2><script>alert("seo_xss_marker")</script><p>Легальный текст</p>',
+            'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $html = $this->get('/xss-script')->assertOk()->getContent();
+
+        // The injected payload must not be executable — unique marker string must be gone
+        $this->assertStringNotContainsString('seo_xss_marker', $html);
+        // Safe content must remain
+        $this->assertStringContainsString('Легальный заголовок', $html);
+        $this->assertStringContainsString('Легальный текст', $html);
+    }
+
+    public function test_seo_text_onclick_attribute_is_stripped(): void
+    {
+        DB::table('seo_pages')->insert([
+            'title'     => 'XSS onclick test',
+            'slug'      => 'xss-onclick',
+            'seo_text'  => '<h2 onclick="seo_evil_marker()">Заголовок</h2><p onmouseover="seo_steal_marker()">Текст</p>',
+            'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $html = $this->get('/xss-onclick')->assertOk()->getContent();
+
+        // Unique marker values from injected event handlers must not appear
+        $this->assertStringNotContainsString('seo_evil_marker', $html);
+        $this->assertStringNotContainsString('seo_steal_marker', $html);
+        // Tags themselves must survive
+        $this->assertStringContainsString('<h2', $html);
+        $this->assertStringContainsString('Заголовок', $html);
+    }
+
+    public function test_seo_text_javascript_href_is_stripped(): void
+    {
+        DB::table('seo_pages')->insert([
+            'title'     => 'XSS javascript href',
+            'slug'      => 'xss-href',
+            'seo_text'  => '<p><a href="javascript:alert(1)">опасная ссылка</a> <a href="/catalog">безопасная ссылка</a></p>',
+            'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $html = $this->get('/xss-href')->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('javascript:', $html);
+        // Link text survives; safe href survives
+        $this->assertStringContainsString('опасная ссылка', $html);
+        $this->assertStringContainsString('href="/catalog"', $html);
+    }
+
+    public function test_seo_text_entity_encoded_script_is_sanitized(): void
+    {
+        // Double threat: entities that decode to <script>
+        DB::table('seo_pages')->insert([
+            'title'     => 'XSS entity-encoded script',
+            'slug'      => 'xss-entities',
+            'seo_text'  => '&lt;script&gt;seo_entity_xss_marker()&lt;/script&gt;<h2>Чистый заголовок</h2>',
+            'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $html = $this->get('/xss-entities')->assertOk()->getContent();
+
+        // html_entity_decode → sanitizeHtml must remove the script payload
+        $this->assertStringNotContainsString('seo_entity_xss_marker', $html);
+        $this->assertStringContainsString('Чистый заголовок', $html);
+    }
+
+    public function test_seo_text_safe_html_preserved_after_sanitize(): void
+    {
+        // All elements allowed for article content must pass through
+        $safe = implode('', [
+            '<h2 id="my-section">Раздел</h2>',
+            '<h3>Подраздел</h3>',
+            '<p><strong>жирный</strong> и <em>курсив</em></p>',
+            '<ul><li>Пункт 1</li><li>Пункт 2</li></ul>',
+            '<ol><li>Первый</li></ol>',
+            '<a href="/catalog">Ссылка</a>',
+            '<blockquote><p>Цитата</p></blockquote>',
+            '<table><thead><tr><th>Товар</th><th>Цена</th></tr></thead>',
+            '<tbody><tr><td>Антигель</td><td>1500 ₸</td></tr></tbody></table>',
+        ]);
+
+        DB::table('seo_pages')->insert([
+            'title'     => 'Safe HTML test',
+            'slug'      => 'safe-html',
+            'seo_text'  => $safe,
+            'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $html = $this->get('/safe-html')->assertOk()->getContent();
+
+        $this->assertStringContainsString('<h2', $html);
+        $this->assertStringContainsString('id="my-section"', $html);
+        $this->assertStringContainsString('<strong>', $html);
+        $this->assertStringContainsString('<em>', $html);
+        $this->assertStringContainsString('<ul>', $html);
+        $this->assertStringContainsString('<a href="/catalog">', $html);
+        $this->assertStringContainsString('<table>', $html);
+    }
 }
