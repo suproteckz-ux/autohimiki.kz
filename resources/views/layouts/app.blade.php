@@ -29,7 +29,9 @@
     @endif
 
     {{-- Robots --}}
-    @hasSection('noindex')
+    @if(!empty($seoRobots))
+        <meta name="robots" content="{{ $seoRobots }}">
+    @elseif(View::hasSection('noindex'))
         <meta name="robots" content="noindex, nofollow">
     @else
         <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">

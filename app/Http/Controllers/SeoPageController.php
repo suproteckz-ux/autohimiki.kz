@@ -36,7 +36,18 @@ class SeoPageController extends Controller
                 ['name' => $page->seoH1()],
             ];
 
-        return view('pages.seo-page', compact('page', 'breadcrumbs'));
+        $filterPagination = null;
+        $seoRobots = null;
+        if ($page->filter_criteria) {
+            $filterPagination = app(\App\Services\SeoManager\FilterProducts::class)
+                ->query($page->filter_criteria)->with('brand')->orderBy('id')->paginate(24);
+            $page->setRelation('products', $filterPagination->getCollection());
+            if ($filterPagination->isEmpty() || request()->query()) {
+                $seoRobots = 'noindex, follow';
+            }
+        }
+
+        return view('pages.seo-page', compact('page', 'breadcrumbs', 'filterPagination', 'seoRobots'));
     }
 
     // ──────────────────────────────────────────────────────────────

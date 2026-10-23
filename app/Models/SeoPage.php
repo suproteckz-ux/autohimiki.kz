@@ -14,6 +14,7 @@ class SeoPage extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'filter_criteria' => 'array',
         'faq' => 'array',
         'is_active' => 'boolean',
         'show_comparison' => 'boolean',

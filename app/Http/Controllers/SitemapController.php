@@ -194,8 +194,12 @@ class SitemapController extends Controller
             );
 
             SeoPage::active()
-                ->select(['id', 'slug', 'updated_at'])
+                ->select(['id', 'slug', 'updated_at', 'filter_criteria'])
                 ->each(function (SeoPage $page) use (&$items) {
+                    if ($page->filter_criteria && ! app(\App\Services\SeoManager\FilterProducts::class)->query($page->filter_criteria)->exists()) {
+                        return;
+                    }
+
                     $items .= $this->urlEntry(
                         loc:        url("/{$page->slug}"),
                         lastmod:    $page->updated_at,

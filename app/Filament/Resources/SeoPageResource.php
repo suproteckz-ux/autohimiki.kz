@@ -83,6 +83,11 @@ class SeoPageResource extends Resource
 
                             Section::make('Текст статьи')
                                 ->schema([
+                                    Textarea::make('filter_criteria')
+                                        ->label('Условия SEO-фильтра (для проверки перед публикацией)')
+                                        ->formatStateUsing(fn ($state) => $state ? json_encode($state, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) : '')
+                                        ->disabled()->dehydrated(false)
+                                        ->visible(fn ($record) => ! empty($record?->filter_criteria)),
                                     RichEditor::make('seo_text')
                                         ->label('')
                                         ->toolbarButtons([
