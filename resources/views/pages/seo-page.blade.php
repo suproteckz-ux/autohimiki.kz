@@ -19,7 +19,7 @@
 
 @if($isArticle)
     @section('canonical')
-        <link rel="canonical" href="{{ url('/' . $page->slug) }}">
+        <link rel="canonical" href="{{ ($page->canonical_url ?: url('/' . $page->slug)) . (isset($filterPagination) && $filterPagination->currentPage() > 1 ? '?page=' . $filterPagination->currentPage() : '') }}">
     @endsection
 @endif
 
@@ -34,6 +34,10 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
 @endpush
 
 @section('content')
+
+@if(isset($filterPagination) && $filterPagination->hasPages())
+    <div class="container mx-auto py-4">{{ $filterPagination->links() }}</div>
+@endif
 
 {{-- ═══════════════════════════════════════════════════════════════
      ARTICLE LAYOUT — SEO-страницы (isset $page)
