@@ -564,10 +564,11 @@ input[type="tel"],input[type="number"],textarea,select{font-size:16px}
 .ah-search input{font-size:16px;font-family:var(--ah-font)}
 
 /* ── Bottom navigation — Stage 1 + P0 fix ── */
-/* Reset old body padding and old span{font-size:22px} that caused label overlap */
+/* Reset old body padding and old span{font-size:22px;color:orange} that caused label overlap.
+   !important needed: old rule at line 174 is same specificity (0,1,1) in same media context. */
 @media(max-width:768px){
   body{padding-bottom:0}
-  .ah-bottom-nav span{font-size:inherit;line-height:inherit;color:inherit}
+  .ah-bottom-nav span{font-size:inherit!important;line-height:inherit!important;color:inherit!important}
 }
 
 /* Full bottom nav styles */
@@ -586,8 +587,9 @@ input[type="tel"],input[type="number"],textarea,select{font-size:16px}
 }
 .ah-bottom-nav a:hover{color:var(--ah-orange-hover)}
 .ah-bottom-nav a svg{width:22px;height:22px;flex-shrink:0;stroke:currentColor;stroke-width:2.5;fill:none;stroke-linecap:round;stroke-linejoin:round}
-.ah-bottom-nav span.ah-nav-label{
-  font-size:11px;line-height:1.2;font-weight:600;
+/* Nav label — selector (0,2,2) beats old (0,1,1), !important as extra guard */
+.ah-bottom-nav a span.ah-nav-label{
+  font-size:11px!important;color:inherit!important;line-height:1.2;font-weight:600;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   max-width:100%;display:block;pointer-events:none;
 }
@@ -1068,3 +1070,124 @@ details.ah-footer-group[open]>.ah-footer-group-toggle svg{transform:rotate(180de
 }
 .ah-input:focus,.ah-search-input:focus{border-color:var(--ah-orange);outline:none}
 .ah-search-field .ah-button{flex-shrink:0;height:48px;padding-inline:20px;border-radius:var(--ah-r-sm)}
+
+/* ══════════════════════════════════════════════════════════
+   Stage 2 — Home page + category cards mobile improvements
+══════════════════════════════════════════════════════════ */
+
+/* ── Home category grid — Stage 2 override ── */
+/* Use Manrope font, modern look for the handoff variant */
+.ah-category-card--handoff{
+  border-radius:var(--ah-r-md)!important;
+  gap:10px!important;
+  padding:12px 14px!important;
+  transition:box-shadow .15s,border-color .15s!important;
+}
+.ah-category-card--handoff:hover{
+  box-shadow:0 6px 20px rgba(18,23,30,.1)!important;
+}
+.ah-category-card--handoff .ah-category-copy h3{
+  font-family:var(--ah-font)!important;
+  font-size:13px!important;
+  font-weight:700!important;
+  line-height:1.3!important;
+  color:var(--ah-ink)!important;
+  overflow:hidden;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;
+}
+.ah-category-card--handoff .ah-category-copy span{
+  font-family:var(--ah-font)!important;
+  font-size:11px!important;
+  color:var(--ah-muted)!important;
+}
+.ah-category-icon-wash{
+  border-radius:var(--ah-r-sm)!important;
+  background:var(--ah-orange-tint)!important;
+  color:var(--ah-orange-dark)!important;
+}
+
+/* Home category grid — 6 cols desktop, tighter mobile */
+@media(max-width:768px){
+  .ah-home-category-grid{
+    grid-template-columns:repeat(2,1fr)!important;
+    gap:8px!important;
+  }
+  .ah-category-card--handoff{
+    min-height:60px!important;
+    padding:10px 12px!important;
+    gap:8px!important;
+  }
+  .ah-category-card--handoff .ah-category-copy h3{
+    font-size:12px!important;
+  }
+  .ah-category-icon-wash{
+    width:36px!important;height:36px!important;
+  }
+  .ah-category-icon-wash .ah-category-icon{
+    width:20px!important;height:20px!important;
+  }
+}
+@media(max-width:430px){
+  .ah-home-category-grid{grid-template-columns:1fr 1fr!important;gap:7px!important}
+  .ah-category-card--handoff .ah-category-copy h3{font-size:11px!important}
+}
+
+/* ── Home product grid — Stage 2 ── */
+/* 4 cols → 2 cols at 768 → list at 599 (inherited from ah-catalog-product-grid rule) */
+@media(max-width:768px){
+  .ah-home-product-grid{
+    grid-template-columns:repeat(2,1fr)!important;
+    gap:10px!important;
+  }
+}
+@media(max-width:430px){
+  .ah-home-product-grid{gap:8px!important}
+}
+
+/* ── Home hero — compact mobile ── */
+@media(max-width:539px){
+  .ah-hero-copy{order:1}
+  .ah-hero-visual{order:0;max-height:200px;overflow:hidden;border-radius:var(--ah-r-md)}
+  .ah-hero-visual img{width:100%;height:200px;object-fit:cover;object-position:center top}
+  .ah-hero h1{font-size:clamp(24px,7.5vw,36px)!important;letter-spacing:-.4px;line-height:1.1}
+  .ah-hero-description{font-size:13px!important;line-height:1.5;margin-top:6px!important}
+  .ah-hero-actions{gap:8px}
+  .ah-hero-actions .ah-button{min-height:48px;width:100%;justify-content:center}
+}
+
+/* ── Section headings — Stage 2 Manrope polish ── */
+.ah-section-heading h2{
+  font-family:var(--ah-font)!important;
+  font-weight:800!important;
+  letter-spacing:-.02em!important;
+  text-transform:none!important;
+}
+@media(max-width:539px){.ah-section-heading h2{font-size:20px!important}}
+
+/* ── Trust block — Stage 2 ── */
+@media(max-width:539px){
+  .ah-trust-grid{grid-template-columns:1fr 1fr!important;gap:12px!important}
+  .ah-trust h2{font-family:var(--ah-font)!important;font-size:12px!important;font-weight:700!important;text-transform:none!important}
+  .ah-trust p{font-family:var(--ah-font)!important;font-size:11px!important}
+}
+
+/* ── Brand grid mobile ── */
+@media(max-width:539px){
+  .ah-brand-grid{grid-template-columns:repeat(3,1fr)!important;gap:8px!important}
+}
+
+/* ── Subcategory chips — Stage 2 override of old dark-mode chips ── */
+/* Old rule at line 128 uses dark #3a4551 border. Our new chips are light pill-style. */
+.ah-catalog-hero .ah-subcategories a{
+  border-color:rgba(255,255,255,.25)!important;
+  color:rgba(255,255,255,.85)!important;
+  background:rgba(255,255,255,.07)!important;
+  border-radius:var(--ah-r-pill)!important;
+  font-size:13px!important;
+  font-weight:600!important;
+}
+.ah-catalog-hero .ah-subcategories a:hover{
+  border-color:var(--ah-orange)!important;
+  background:rgba(236,133,50,.15)!important;
+  color:#fff!important;
+}

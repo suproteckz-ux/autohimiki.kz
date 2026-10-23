@@ -34,7 +34,7 @@
 @if($categories->count())
 <section class="ah-section ah-section-muted" id="home-categories"><div class="ah-container">
     <x-ui.section-heading title="Категории товаров" :href="route('catalog')" link="Все категории" />
-    <div class="ah-category-grid ah-home-category-grid">@foreach($categories as $category)<x-category.card :category="$category" layout="grid" />@endforeach</div>
+    <div class="ah-category-grid ah-home-category-grid">@foreach($categories as $category)<x-category.card :category="$category" variant="handoff" />@endforeach</div>
     <a class="ah-all-categories" href="{{ route('catalog') }}">Все {{ $categories->count() }} категорий <span aria-hidden="true">→</span></a>
 </div></section>
 @endif

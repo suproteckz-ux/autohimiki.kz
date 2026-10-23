@@ -120,7 +120,7 @@
         @if($cartCount > 0)
         <span class="ah-nav-count" aria-hidden="true">{{ $cartCount }}</span>
         @endif
-        <span class="ah-nav-label">Корзина{{ $cartCount > 0 ? ' ('.$cartCount.')' : '' }}</span>
+        <span class="ah-nav-label">Корзина</span>
     </a>
 
     {{-- WhatsApp / Контакты --}}
