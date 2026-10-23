@@ -59,17 +59,17 @@
     <link rel="icon" href="{{ asset('storage/' . $settings['favicon']) }}" type="image/png">
     @endif
 
-    {{-- ── PRECONNECT (ускоряем DNS для внешних ресурсов) ─────── --}}
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    {{-- ── Manrope — локальный шрифт (self-hosted woff2) ────────── --}}
+    <link rel="preload"
+          href="{{ asset('fonts/manrope-cyrillic-wght-normal.woff2') }}"
+          as="font" type="font/woff2" crossorigin>
+    <link rel="preload"
+          href="{{ asset('fonts/manrope-latin-wght-normal.woff2') }}"
+          as="font" type="font/woff2" crossorigin>
 
     {{-- ── LCP ОПТИМИЗАЦИЯ: preload критичных ресурсов ───────── --}}
     {{-- CSS загружается первым, блокирует рендер меньше --}}
     @vite(['resources/css/app.css'])
-
-    {{-- Шрифт: display=swap предотвращает FOIT --}}
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-          rel="stylesheet">
 
     {{-- Preload главного изображения (только если передано из контроллера) --}}
     @if(isset($preloadImage))

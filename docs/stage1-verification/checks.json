@@ -1,0 +1,32 @@
+{
+  "mobile": {
+    "headerH": 137,
+    "topbarVisible": false,
+    "bottomNavH": 96,
+    "menuBtnRect": {
+      "w": 44,
+      "h": 44
+    },
+    "overflow": {
+      "docW": 390,
+      "vpW": 390
+    },
+    "errors": [],
+    "fontFamily": "Manrope, system-ui, sans-serif",
+    "menuOpen": true
+  },
+  "desktop": {
+    "headerH": 181,
+    "topbarH": 34,
+    "mainRowH": 98,
+    "desktopNavH": 48,
+    "bottomNavHidden": true,
+    "topbarNavVisible": true,
+    "overflow": {
+      "docW": 1440,
+      "vpW": 1440
+    },
+    "errors": [],
+    "fontFamily": "Manrope, system-ui, sans-serif"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "mobile": {
+    "headerH": 111,
+    "topbarVis": false,
+    "desktopNavPresent": false,
+    "menuBtnH": 44,
+    "overflow": 0,
+    "font": "Manrope, system-ui, sans-serif",
+    "logoSmall": "none",
+    "bnVisible": true,
+    "bnCartBadge": true,
+    "errors": [],
+    "menuOpen": true
+  },
+  "desktop": {
+    "headerH": 117,
+    "topbarH": 34,
+    "mainRowH": 82,
+    "desktopNavPresent": false,
+    "bnHidden": true,
+    "topbarNavVis": true,
+    "searchCatVis": true,
+    "overflow": 0,
+    "font": "Manrope, system-ui, sans-serif",
+    "logoSubtitle": "block",
+    "errors": []
+  }
+}
