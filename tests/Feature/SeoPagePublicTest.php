@@ -110,6 +110,7 @@ class SeoPagePublicTest extends TestCase
             $table->longText('seo_text')->nullable();
             $table->json('faq')->nullable();
             $table->boolean('show_comparison')->default(false);
+            $table->boolean('show_in_blog')->default(false);
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });

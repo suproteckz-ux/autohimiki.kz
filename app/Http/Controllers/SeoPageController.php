@@ -27,9 +27,14 @@ class SeoPageController extends Controller
             abort(404);
         }
 
-        $breadcrumbs = [
-            ['name' => $page->seoH1()],
-        ];
+        $breadcrumbs = ($page->show_in_blog ?? false)
+            ? [
+                ['name' => 'Блог', 'url' => route('blog')],
+                ['name' => $page->seoH1()],
+            ]
+            : [
+                ['name' => $page->seoH1()],
+            ];
 
         return view('pages.seo-page', compact('page', 'breadcrumbs'));
     }
@@ -44,7 +49,7 @@ class SeoPageController extends Controller
         $filter = SeoFilter::active()
             ->where('is_indexed', true)
             ->whereHas('category', fn ($q) => $q->active()->where('slug', $categorySlug))
-            ->whereHas('brand',    fn ($q) => $q->active()->where('slug', $brandSlug))
+            ->whereHas('brand', fn ($q) => $q->active()->where('slug', $brandSlug))
             ->with([
                 'category:id,name,slug,parent_id',
                 'brand:id,name,slug',
@@ -60,7 +65,7 @@ class SeoPageController extends Controller
         // Товары этой категории + бренда
         $products = Product::active()
             ->where('category_id', $filter->category_id)
-            ->where('brand_id',    $filter->brand_id)
+            ->where('brand_id', $filter->brand_id)
             ->with(['brand:id,name,slug', 'category:id,name,slug'])
             ->orderByDesc('is_hit')
             ->paginate(24);

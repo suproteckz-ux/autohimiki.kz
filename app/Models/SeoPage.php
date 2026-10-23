@@ -17,6 +17,7 @@ class SeoPage extends Model
         'faq' => 'array',
         'is_active' => 'boolean',
         'show_comparison' => 'boolean',
+        'show_in_blog' => 'boolean',
     ];
 
     public function products(): BelongsToMany

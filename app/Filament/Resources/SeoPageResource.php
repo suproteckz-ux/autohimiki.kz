@@ -134,6 +134,11 @@ class SeoPageResource extends Resource
                                             ->helperText('Только если выбрано 2+ товара')
                                             ->default(false)
                                             ->inline(false),
+                                        Toggle::make('show_in_blog')
+                                            ->label('Показывать в блоге')
+                                            ->helperText('Страница появится в /blog (только если активна)')
+                                            ->default(false)
+                                            ->inline(false),
                                     ]),
                             ]),
 
@@ -216,6 +221,8 @@ class SeoPageResource extends Resource
                     ->sortable(),
                 ToggleColumn::make('is_active')
                     ->label('Активна'),
+                ToggleColumn::make('show_in_blog')
+                    ->label('В блоге'),
                 TextColumn::make('updated_at')
                     ->label('Обновлена')
                     ->dateTime('d.m.Y')
