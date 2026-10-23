@@ -440,11 +440,33 @@ details.ah-seoart-toc[open] .ah-seoart-toc-chev{transform:rotate(180deg)}
 }
 @media(max-width:540px){
   .ah-seoart-hero-title{font-size:24px}
-  .ah-seoart-hero-intro{font-size:15px}
+  .ah-seoart-hero-intro{font-size:15px;margin-top:10px}
+  .ah-seoart-hero-meta{margin-top:14px}
   .ah-seoart-toc ul{margin-top:4px}
   .ah-seoart-section{margin-bottom:40px}
+  .ah-seoart-cta{padding:24px 20px}
   .ah-seoart-cta .ah-button{width:100%;white-space:normal;text-align:center}
   .ah-seoart-hero-actions .ah-button{width:100%;min-height:52px}
+  .ah-seo-card-image{height:160px;padding:12px}
+  .ah-seo-card-image img{max-height:136px}
+  .ah-seo-card-body{padding:14px 16px 16px}
+  .ah-seo-card-name{font-size:15px}
+  .ah-seo-card-footer{flex-direction:column;align-items:stretch;gap:8px}
+  .ah-seo-card-price{font-size:22px}
+  .ah-seo-card-cta{width:100%;min-height:48px;font-size:15px;text-align:center}
+  .ah-article-faq summary{padding:18px 0}
+  .ah-article-faq-answer{padding-right:16px}
+}
+@media(max-width:640px){
+  .ah-seoart-compare-wrap{border:none;overflow:visible;background:transparent}
+  .ah-seoart-compare-tbl,.ah-seoart-compare-tbl thead,.ah-seoart-compare-tbl tbody,.ah-seoart-compare-tbl tr,.ah-seoart-compare-tbl th,.ah-seoart-compare-tbl td{display:block}
+  .ah-seoart-compare-tbl thead{display:none}
+  .ah-seoart-compare-tbl tbody tr{border:1px solid var(--ah-line);border-radius:12px;margin-bottom:12px;padding:14px 16px;background:#fff}
+  .ah-seoart-compare-tbl td{padding:6px 0 0;border:none}
+  .ah-seoart-compare-tbl td:first-child{padding-top:0}
+  .ah-seoart-compare-tbl td[data-label]:not([data-label="Товар"])::before{content:attr(data-label);display:block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#6b7280;margin-bottom:3px}
+  .ah-cmp-img{width:48px;height:48px}
+  .ah-cmp-price{font-size:20px}
 }
 
 /* ═══════════════════════════════════════════════════════════════

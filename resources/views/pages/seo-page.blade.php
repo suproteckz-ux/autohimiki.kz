@@ -217,7 +217,7 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
                   }
                 @endphp
                 <tr>
-                  <td>
+                  <td data-label="Товар">
                     <div class="ah-cmp-product">
                       <div class="ah-cmp-img">
                         @if(!empty($cmpProduct->main_image))
@@ -234,7 +234,7 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
                     </div>
                   </td>
                   @if($anyHasAttrs)
-                  <td>
+                  <td data-label="Характеристики">
                     @if($cmpAttrs)
                       @foreach($cmpAttrs as $cmpAttr)
                         <p class="ah-cmp-spec"><span>{{ $cmpAttr['k'] }}:</span> {{ $cmpAttr['v'] }}</p>
@@ -244,8 +244,8 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
                     @endif
                   </td>
                   @endif
-                  <td><span class="ah-cmp-price">{{ number_format($cmpProduct->price, 0, '.', ' ') }}&nbsp;₸</span></td>
-                  <td>
+                  <td data-label="Цена"><span class="ah-cmp-price">{{ number_format($cmpProduct->price, 0, '.', ' ') }}&nbsp;₸</span></td>
+                  <td data-label="Наличие">
                     <span @class(['ah-cmp-stock', 'is-in' => $cmpProduct->in_stock])>
                       {{ $cmpProduct->in_stock ? '● В наличии' : '● Нет' }}
                     </span>
