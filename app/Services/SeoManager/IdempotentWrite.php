@@ -3,9 +3,9 @@
 namespace App\Services\SeoManager;
 
 use Closure;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Database\QueryException;
 
 class IdempotentWrite
 {
@@ -19,6 +19,7 @@ class IdempotentWrite
         $replay = function ($existing) use ($hash) {
             abort_unless(hash_equals($existing->payload_hash, $hash), 409, 'Idempotency key already used with another request.');
             abort_if($existing->response === null, 409, 'Write in progress; retry.');
+
             return response()->json(json_decode($existing->response, true), $existing->http_status)->header('Idempotent-Replayed', 'true');
         };
         if ($existing = $lookup()) {
@@ -36,6 +37,7 @@ class IdempotentWrite
                     'actor' => $actor, 'action' => $action, 'resource_id' => $result['id'],
                     'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
                 ]);
+
                 return response()->json($result, 201);
             }, 3);
         } catch (QueryException $e) {

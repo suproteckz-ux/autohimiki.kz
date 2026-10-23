@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\SeoPage;
+use App\Models\User;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -81,9 +83,10 @@ class SeoManagerApiTest extends TestCase
         $this->getJson('/api/seo-manager/v1/status', $this->headers())
             ->assertOk()
             ->assertJson(['status' => 'ready', 'api_version' => 1, 'drafts_write' => true]);
-        $this->getJson('/api/seo-manager/v1/catalog/products', $this->headers())
-            ->assertOk()
-            ->assertHeader('Cache-Control', 'private, no-store');
+        $catalog = $this->getJson('/api/seo-manager/v1/catalog/products', $this->headers())->assertOk();
+        $cacheControl = (string) $catalog->headers->get('Cache-Control');
+        $this->assertStringContainsString('private', $cacheControl);
+        $this->assertStringContainsString('no-store', $cacheControl);
         config(['seo_manager.read_token_hash' => hash('sha256', str_repeat('r', 48))]);
         $this->postJson('/api/seo-manager/v1/drafts', $this->payload(), ['Authorization' => 'Bearer '.str_repeat('r', 48)])->assertForbidden();
         config(['seo_manager.allow_local_http' => false]);
@@ -136,10 +139,15 @@ class SeoManagerApiTest extends TestCase
     public function test_draft_is_visible_in_existing_filament_editor(): void
     {
         Schema::create('users', function ($table) {
-            $table->id(); $table->string('name'); $table->string('email'); $table->string('password');
-            $table->string('role'); $table->rememberToken(); $table->timestamps();
+            $table->id();
+            $table->string('name');
+            $table->string('email');
+            $table->string('password');
+            $table->string('role');
+            $table->rememberToken();
+            $table->timestamps();
         });
-        $user = \App\Models\User::create(['name' => 'Test admin', 'email' => 'test@example.invalid', 'password' => 'test-only-password', 'role' => 'admin']);
+        $user = User::create(['name' => 'Test admin', 'email' => 'test@example.invalid', 'password' => 'test-only-password', 'role' => 'admin']);
         $id = $this->postJson('/api/seo-manager/v1/drafts', $this->payload(), $this->headers())->json('id');
         $this->actingAs($user)->get('/admin/seo-pages/'.$id.'/edit')->assertOk()->assertSee('SEO');
         $this->actingAs($user)->get('/admin/seo-manager-proposals')->assertOk();
@@ -153,7 +161,7 @@ class SeoManagerApiTest extends TestCase
         SeoPage::findOrFail($id)->update(['is_active' => true]); // Simulate deliberate manual publication only inside test.
         $this->get('/'.$filter['slug'].'?page=2')->assertOk()->assertSee('noindex, follow', false)->assertSee('?page=2', false);
         DB::table('products')->where('id', 1)->update(['in_stock' => false]);
-        \Illuminate\Support\Facades\Cache::flush();
+        Cache::flush();
         $this->get('/'.$filter['slug'])->assertOk()->assertSee('noindex, follow', false);
         $this->get('/sitemap-seo-pages.xml')->assertOk()->assertDontSee('/'.$filter['slug']);
     }

@@ -78,8 +78,10 @@ class SeoManagerController extends Controller
                 $item['category_ids'] = $entity->categories->modelKeys();
                 $item['status'] = $entity->is_active ? 'published' : 'draft';
             }
+
             return $item;
         });
+
         return response()->json(['data' => $items, 'meta' => ['current_page' => $paginator->currentPage(),
             'last_page' => $paginator->lastPage(), 'total' => $paginator->total(), 'per_page' => $paginator->perPage(),
             'generated_at' => now()->toIso8601String()]]);
@@ -188,6 +190,7 @@ class SeoManagerController extends Controller
             'kind' => $kind, 'metadata' => json_encode(array_intersect_key($data, array_flip(['target_queries', 'image_recommendations', 'internal_links'])), JSON_THROW_ON_ERROR),
             'created_at' => now(), 'updated_at' => now(),
         ]);
+
         return ['id' => $page->id, 'kind' => $kind, 'status' => 'draft', 'url' => url('/'.$page->slug), 'admin_url' => url('/admin/seo-pages/'.$page->id.'/edit')];
     }
 
@@ -213,6 +216,7 @@ class SeoManagerController extends Controller
                 'proposal' => json_encode($data['proposal'], JSON_THROW_ON_ERROR),
                 'status' => 'proposed', 'created_at' => now(), 'updated_at' => now(),
             ]);
+
             return ['id' => $id, 'kind' => 'proposal', 'status' => 'proposed', 'admin_url' => url('/admin/seo-manager-proposals')];
         });
     }

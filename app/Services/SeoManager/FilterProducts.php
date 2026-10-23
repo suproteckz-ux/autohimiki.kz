@@ -23,6 +23,7 @@ class FilterProducts
             }
             $query->where('attributes->'.$key, $value);
         }
+
         return $query;
     }
 }
