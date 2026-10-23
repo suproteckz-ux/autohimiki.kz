@@ -103,16 +103,6 @@
         </div>
     </div>
 
-    {{-- Desktop nav (hidden on ≤ 1023px — handled by mobile menu) --}}
-    <nav class="ah-container ah-desktop-nav" aria-label="Основная навигация">
-        <a class="ah-catalog-link" href="{{ route('catalog') }}"><span aria-hidden="true">☰</span> Каталог товаров</a>
-        <a href="{{ route('brands') }}">Бренды</a>
-        <a href="{{ route('blog') }}">Блог</a>
-        <a href="{{ route('home') }}#advantages">Почему мы</a>
-        <a href="#store-contacts">Контакты</a>
-        <span class="ah-nav-note">Подберём уход для вашего авто</span>
-    </nav>
-
     {{-- Mobile backdrop --}}
     <div class="ah-mobile-menu-backdrop"
          :class="{ 'is-open': mobileOpen }"

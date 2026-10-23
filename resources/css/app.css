@@ -793,3 +793,10 @@ details.ah-footer-group[open]>.ah-footer-group-toggle svg{transform:rotate(180de
 }
 /* Search input font fix already covered above; add to .ah-search input explicitly */
 .ah-search input{font-size:16px!important}
+
+/* ── Mobile header height fix — Stage 1 ── */
+/* Reduce row-gap when search wraps to 2nd row, and hide logo subtitle */
+@media(max-width:639px){
+  .ah-header-main{gap:4px;padding-block:8px}
+  .ah-logo small{display:none}
+}
