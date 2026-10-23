@@ -41,21 +41,43 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
 @if($isArticle)
 
 @php
-    $updatedAt      = $page->updated_at?->locale('ru')->isoFormat('MMMM YYYY');
-    $plainText      = strip_tags(($page->intro ?? '') . ' ' . ($page->seo_text ?? ''));
+    $updatedAt    = $page->updated_at?->locale('ru')->isoFormat('MMMM YYYY');
+    $categories   = $page->categories ?? collect();
+    $faqItems     = is_array($page->faq) ? $page->faq : [];
+    $hasHeroImage = !empty($page->hero_image);
+
+    // Decode HTML entities: Filament/DB may store &lt;h2&gt; instead of <h2>
+    $seoText = $page->seo_text
+        ? html_entity_decode($page->seo_text, ENT_QUOTES | ENT_HTML5, 'UTF-8')
+        : null;
+
+    $plainText      = strip_tags(($page->intro ?? '') . ' ' . ($seoText ?? ''));
     $wordCount      = str_word_count($plainText);
     $readingMinutes = max(1, (int) ceil($wordCount / 200));
-    $categories     = $page->categories ?? collect();
-    $faqItems       = is_array($page->faq) ? $page->faq : [];
-    $hasHeroImage   = !empty($page->hero_image);
 
-    // Auto-extract h2 headings with id from seo_text for TOC
-    $toc = [];
-    if ($page->seo_text) {
-        preg_match_all('/<h2[^>]*id=["\']([^"\']+)["\'][^>]*>(.*?)<\/h2>/si', $page->seo_text, $m);
-        foreach ($m[1] ?? [] as $i => $id) {
-            $toc[] = ['id' => $id, 'text' => strip_tags($m[2][$i])];
-        }
+    // Extract all h2 headings, injecting id where absent, build TOC
+    $toc   = [];
+    $h2Idx = 0;
+    if ($seoText) {
+        $seoText = preg_replace_callback(
+            '/<h2([^>]*)>(.*?)<\/h2>/si',
+            function ($m) use (&$toc, &$h2Idx) {
+                $attrs = $m[1];
+                $inner = $m[2];
+                $text  = trim(strip_tags($inner));
+                if (!$text) return $m[0];
+                if (preg_match('/\bid=["\']([^"\']+)["\']/', $attrs, $im)) {
+                    $id = $im[1];
+                } else {
+                    $h2Idx++;
+                    $id    = 'section-' . $h2Idx;
+                    $attrs .= ' id="' . $id . '"';
+                }
+                $toc[] = ['id' => $id, 'text' => $text];
+                return '<h2' . $attrs . '>' . $inner . '</h2>';
+            },
+            $seoText
+        );
     }
     if ($products->isNotEmpty()) {
         $toc[] = ['id' => 'tovary', 'text' => 'Товары в наличии'];
@@ -67,9 +89,9 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
     // CTA fields with fallbacks
     $ctaLink    = $page->cta_link
         ?: ($categories->isNotEmpty() ? url('/catalog/' . $categories->first()->slug) : route('catalog'));
-    $ctaText    = $page->cta_button_text    ?: 'Перейти в каталог';
-    $ctaHeading = $page->cta_heading        ?: 'Товары в наличии в Алматы';
-    $ctaDesc    = $page->cta_description    ?: 'Доставка по Алматы и Казахстану. Бесплатная консультация по подбору.';
+    $ctaText    = $page->cta_button_text ?: 'Перейти в каталог';
+    $ctaHeading = $page->cta_heading     ?: 'Товары в наличии в Алматы';
+    $ctaDesc    = $page->cta_description ?: 'Доставка по Алматы и Казахстану. Бесплатная консультация по подбору.';
 @endphp
 
 <div class="ah-seoart-page">
@@ -119,15 +141,15 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
       {{-- Main article column --}}
       <div class="ah-seoart-content">
 
-        @if($page->seo_text)
+        @if($seoText)
         <article class="ah-seoart-body" id="article-body">
-          {!! $page->seo_text !!}
+          {!! $seoText !!}
         </article>
         @endif
 
         {{-- Related products --}}
         @if($products->isNotEmpty())
-        <section id="tovary" class="ah-seoart-section" aria-labelledby="products-heading" style="scroll-margin-top:24px">
+        <section id="tovary" class="ah-seoart-section" aria-labelledby="products-heading">
           <div class="ah-seoart-section-header">
             <h2 id="products-heading">Рекомендуемые товары</h2>
             @if($categories->isNotEmpty())
@@ -142,38 +164,81 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
         </section>
         @endif
 
-        {{-- Comparison block --}}
+        {{-- Comparison table --}}
         @if($page->show_comparison && $products->count() >= 2)
         <section class="ah-seoart-section ah-seoart-compare">
           <div class="ah-seoart-section-header">
             <h2>Сравнение товаров</h2>
           </div>
-          <div class="ah-seoart-compare-grid">
-            @foreach($products->take(4) as $product)
-            <div class="ah-seoart-compare-card">
-              <div class="ah-seoart-compare-img">
-                @if($product->images->isNotEmpty())
-                  <img src="{{ asset('storage/' . $product->images->first()->path) }}"
-                       alt="{{ $product->name }}" loading="lazy">
-                @else
-                  <span class="ah-placeholder">Нет фото</span>
-                @endif
-              </div>
-              <div class="ah-seoart-compare-body">
-                <p class="ah-seoart-compare-name">
-                  <a href="{{ url($product->url ?? '/products/' . $product->slug) }}">{{ $product->name }}</a>
-                </p>
-                <p class="ah-seoart-compare-price">{{ number_format($product->price, 0, '.', ' ') }}&nbsp;₸</p>
-              </div>
-            </div>
-            @endforeach
+          <div class="ah-seoart-compare-wrap">
+            <table class="ah-seoart-compare-tbl">
+              <thead>
+                <tr>
+                  <th>Товар</th>
+                  <th>Характеристики</th>
+                  <th>Цена</th>
+                  <th>Наличие</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach($products->take(6) as $cmpProduct)
+                @php
+                  $cmpAttrs = [];
+                  $cmpRaw   = is_array($cmpProduct->attributes) ? $cmpProduct->attributes : [];
+                  foreach (array_slice($cmpRaw, 0, 2, true) as $cmpKey => $cmpVal) {
+                    if (is_array($cmpVal)) {
+                      $ck = $cmpVal['name'] ?? $cmpVal['k'] ?? '';
+                      $cv = $cmpVal['value'] ?? $cmpVal['v'] ?? '';
+                    } else {
+                      $ck = is_string($cmpKey) ? $cmpKey : '';
+                      $cv = is_string($cmpVal) ? $cmpVal : '';
+                    }
+                    if ($ck !== '' && $cv !== '') $cmpAttrs[] = ['k' => $ck, 'v' => $cv];
+                  }
+                @endphp
+                <tr>
+                  <td>
+                    <div class="ah-cmp-product">
+                      <div class="ah-cmp-img">
+                        @if(!empty($cmpProduct->main_image))
+                          <img src="{{ asset('storage/' . $cmpProduct->main_image) }}"
+                               alt="{{ $cmpProduct->name }}" loading="lazy">
+                        @endif
+                      </div>
+                      <div>
+                        @if($cmpProduct->brand)
+                          <p class="ah-cmp-brand">{{ $cmpProduct->brand->name }}</p>
+                        @endif
+                        <a href="{{ route('product.show', $cmpProduct->slug) }}" class="ah-cmp-name">{{ $cmpProduct->name }}</a>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    @if($cmpAttrs)
+                      @foreach($cmpAttrs as $cmpAttr)
+                        <p class="ah-cmp-spec"><span>{{ $cmpAttr['k'] }}:</span> {{ $cmpAttr['v'] }}</p>
+                      @endforeach
+                    @else
+                      <span class="ah-cmp-na">Не указано</span>
+                    @endif
+                  </td>
+                  <td><span class="ah-cmp-price">{{ number_format($cmpProduct->price, 0, '.', ' ') }}&nbsp;₸</span></td>
+                  <td>
+                    <span @class(['ah-cmp-stock', 'is-in' => $cmpProduct->in_stock])>
+                      {{ $cmpProduct->in_stock ? '● В наличии' : '● Нет' }}
+                    </span>
+                  </td>
+                </tr>
+                @endforeach
+              </tbody>
+            </table>
           </div>
         </section>
         @endif
 
         {{-- FAQ --}}
         @if(!empty($faqItems))
-        <section id="faq" class="ah-seoart-section ah-seoart-faq-section" aria-labelledby="faq-heading" style="scroll-margin-top:24px">
+        <section id="faq" class="ah-seoart-section ah-seoart-faq-section" aria-labelledby="faq-heading">
           <h2 id="faq-heading">Частые вопросы</h2>
           <div class="ah-article-faq">
             @foreach($faqItems as $i => $item)
@@ -197,11 +262,14 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
 
       </div>{{-- .ah-seoart-content --}}
 
-      {{-- Sticky sidebar with TOC --}}
+      {{-- Sticky sidebar with TOC (collapsible on mobile) --}}
       @if(!empty($toc))
       <aside class="ah-seoart-sidebar" aria-labelledby="toc-title">
-        <div class="ah-seoart-toc">
-          <p id="toc-title" class="ah-seoart-toc-label">Содержание</p>
+        <details class="ah-seoart-toc" open>
+          <summary class="ah-seoart-toc-summary" id="toc-title">
+            Содержание
+            <span class="ah-seoart-toc-chev" aria-hidden="true">▾</span>
+          </summary>
           <ul>
             @foreach($toc as $item)
             <li>
@@ -209,7 +277,7 @@ details[open] .ah-faq-chev { transform: rotate(45deg); }
             </li>
             @endforeach
           </ul>
-        </div>
+        </details>
       </aside>
       @endif
 

@@ -98,8 +98,8 @@ class SeoPagePublicTest extends TestCase
             $table->timestamps();
         });
 
-        // MINIMAL seo_pages schema — exactly what production has BEFORE
-        // migrations 000001-000003 (no intro, no canonical_url, no hero_image, etc.)
+        // MINIMAL seo_pages schema — matches what production has AFTER
+        // migrations 000001-000003 (with the new columns added then)
         Schema::create('seo_pages', function ($table) {
             $table->id();
             $table->string('title');
@@ -109,6 +109,7 @@ class SeoPagePublicTest extends TestCase
             $table->string('meta_description', 500)->nullable();
             $table->longText('seo_text')->nullable();
             $table->json('faq')->nullable();
+            $table->boolean('show_comparison')->default(false);
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
@@ -265,5 +266,81 @@ class SeoPagePublicTest extends TestCase
         ]);
 
         $this->get('/page-with-attrs')->assertOk();
+    }
+
+    public function test_seo_text_with_html_entities_renders_heading_not_literal_tags(): void
+    {
+        // Production bug: seo_text stored with HTML entities (&lt;h2&gt;) instead of
+        // actual tags. {!! !!} outputs &lt;h2&gt; which the browser shows as "<h2>".
+        // Fix: html_entity_decode() in the blade @php block.
+        DB::table('seo_pages')->insert([
+            'title'     => 'Страница с сущностями',
+            'slug'      => 'entities-test',
+            'seo_text'  => '&lt;h2&gt;Заголовок статьи&lt;/h2&gt;&lt;p&gt;Текст параграфа.&lt;/p&gt;',
+            'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $html = $this->get('/entities-test')->assertOk()->getContent();
+
+        // After decode: <h2> must be rendered as an actual tag, not entity text
+        $this->assertStringContainsString('<h2', $html);
+        $this->assertStringContainsString('Заголовок статьи', $html);
+
+        // Should NOT contain the raw entity string as visible text
+        $this->assertStringNotContainsString('&lt;h2&gt;', $html);
+    }
+
+    public function test_toc_auto_generates_id_for_h2_without_id(): void
+    {
+        DB::table('seo_pages')->insert([
+            'title'     => 'Страница с TOC',
+            'slug'      => 'toc-test',
+            'seo_text'  => '<h2>Первый раздел</h2><p>Контент.</p><h2>Второй раздел</h2><p>Ещё.</p>',
+            'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $html = $this->get('/toc-test')->assertOk()->getContent();
+
+        // Auto-generated IDs section-1, section-2 should be injected into headings
+        $this->assertStringContainsString('id="section-1"', $html);
+        $this->assertStringContainsString('id="section-2"', $html);
+
+        // TOC links should reference those IDs
+        $this->assertStringContainsString('href="#section-1"', $html);
+        $this->assertStringContainsString('Первый раздел', $html);
+    }
+
+    public function test_comparison_table_shown_when_show_comparison_and_two_products(): void
+    {
+        $p1 = DB::table('products')->insertGetId([
+            'name' => 'Товар 1', 'slug' => 'tovar-1', 'sku' => 'T001',
+            'price' => 1000, 'in_stock' => true, 'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $p2 = DB::table('products')->insertGetId([
+            'name' => 'Товар 2', 'slug' => 'tovar-2', 'sku' => 'T002',
+            'price' => 2000, 'in_stock' => false, 'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $pageId = DB::table('seo_pages')->insertGetId([
+            'title'           => 'Сравнение',
+            'slug'            => 'compare-test',
+            'show_comparison' => true,
+            'is_active'       => true,
+            'created_at'      => now(), 'updated_at' => now(),
+        ]);
+        DB::table('seo_page_product')->insert([
+            ['seo_page_id' => $pageId, 'product_id' => $p1],
+            ['seo_page_id' => $pageId, 'product_id' => $p2],
+        ]);
+
+        $html = $this->get('/compare-test')->assertOk()->getContent();
+
+        $this->assertStringContainsString('ah-seoart-compare-tbl', $html);
+        $this->assertStringContainsString('Товар 1', $html);
+        $this->assertStringContainsString('Товар 2', $html);
+        $this->assertStringContainsString('Сравнение товаров', $html);
     }
 }
