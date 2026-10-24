@@ -79,6 +79,7 @@ class CacheService
             self::KEY_HOMEPAGE_HITS,
             self::TTL_HOMEPAGE,
             fn () => \App\Models\Product::hits()
+                ->where('quantity', '>', 0)
                 ->with(['brand:id,name,slug', 'category:id,name,slug'])
                 ->orderBy('sort_order')
                 ->limit(8)

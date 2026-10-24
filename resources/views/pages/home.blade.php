@@ -59,6 +59,21 @@
     <div class="ah-brand-grid">@foreach($brands as $brand)<a href="{{ $brand->url ?? url('/brand/' . $brand->slug) }}">@if($brand->logo)<img src="{{ asset('storage/' . ($brand->logo_webp ?? $brand->logo)) }}" alt="{{ $brand->name }}" loading="lazy" width="140" height="50">@else<span>{{ $brand->name }}</span>@endif</a>@endforeach</div>
 </div></section>
 @endif
+<section class="ah-section ah-b2b" aria-labelledby="b2b-title">
+<div class="ah-container"><div class="ah-b2b-inner">
+  <div class="ah-b2b-copy">
+    <h2 id="b2b-title">Работаем с юридическими лицами</h2>
+    <p>Автохимия для организаций и ИП — безналичная оплата и все необходимые бухгалтерские документы.</p>
+    @if($wa)<a href="https://wa.me/{{ $wa }}?text={{ urlencode('Здравствуйте! Хочу оформить корпоративный заказ.') }}" class="ah-button ah-button-orange" target="_blank" rel="noopener">Написать в WhatsApp</a>@else<button type="button" class="ah-button ah-button-orange" x-data @click="$dispatch('open-lead-modal')">Связаться с нами</button>@endif
+  </div>
+  <ul class="ah-b2b-features" aria-label="Условия для корпоративных клиентов">
+    <li><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>Безналичная оплата, счета и накладные</li>
+    <li><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Бухгалтерские документы — ЭСФ, акты</li>
+    <li><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Цены с НДС, работаем с плательщиками НДС</li>
+    <li><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>Корпоративные заказы любого объёма</li>
+  </ul>
+</div></div>
+</section>
 <section class="ah-section ah-seo" id="home-seo"><div class="ah-container ah-seo-grid">
     <div>
         <h2>Интернет-магазин автохимии и автокосметики в Алматы</h2>
@@ -74,11 +89,8 @@
     </div>
     @if($categories->count())<aside><h3>Популярные разделы</h3>@foreach($categories->take(6) as $category)<a href="{{ $category->url }}">{{ $category->name }} <span aria-hidden="true">↗</span></a>@endforeach</aside>@endif
 </div></section>
-<section class="ah-section ah-home-business" aria-labelledby="home-business-title"><div class="ah-container">
-    <h2 id="home-business-title">Работаем с юридическими лицами</h2>
-    <p>Autohimiki.kz работает с организациями и индивидуальными предпринимателями. Предоставляем необходимые бухгалтерские документы.</p>
-    <p><strong>Работаем с НДС. Цены на сайте указаны с учетом НДС.</strong></p>
-    <p>Для оформления заказа от юридического лица клиент может <a href="#store-contacts">связаться с магазином</a> для получения документов и согласования заказа.</p>
+<section class="ah-section ah-home-business"><div class="ah-container">
+    <p><strong>Работаем с НДС. Цены на сайте указаны с учетом НДС.</strong> Autohimiki.kz работает с организациями и ИП — предоставляем необходимые бухгалтерские документы. Для согласования корпоративного заказа <a href="#store-contacts">свяжитесь с нами</a>.</p>
 </div></section>
 <section class="ah-consult"><div class="ah-container"><div><h2>Нужна консультация?</h2><p>Напишите нам — подберём подходящий продукт для вашего автомобиля.</p></div>@if($wa)<a class="ah-button ah-button-deep-green" href="https://wa.me/{{ $wa }}" target="_blank" rel="noopener">Написать в WhatsApp ↗</a>@else<button type="button" class="ah-button ah-button-dark" x-data @click="$dispatch('open-lead-modal')">Получить консультацию</button>@endif</div></section>
 </div>

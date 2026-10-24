@@ -127,7 +127,7 @@ class CatalogController extends Controller
             'price_desc' => $query->orderByDesc('price'),
             'new'        => $query->latest(),
             'popular'    => $query->orderByDesc('views'),
-            default      => $query->orderBy('sort_order')->orderByDesc('is_hit'),
+            default      => $query->orderByStorefrontPriority()->orderBy('sort_order')->orderByDesc('is_hit'),
         };
 
         $products = $query->paginate(self::PER_PAGE)->withQueryString();
