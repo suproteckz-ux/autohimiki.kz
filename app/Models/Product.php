@@ -168,6 +168,17 @@ class Product extends Model
         return $query->where('brand_id', $brandId);
     }
 
+    public function scopeOrderByStorefrontPriority(Builder $query): Builder
+    {
+        return $query
+            ->orderByRaw('in_stock DESC')
+            ->orderByRaw(
+                "(CASE WHEN main_image IS NOT NULL AND main_image <> '' THEN 1
+                       WHEN EXISTS(SELECT 1 FROM product_images pi WHERE pi.product_id = products.id LIMIT 1) THEN 1
+                       ELSE 0 END) DESC"
+            );
+    }
+
     public function scopePriceBetween(Builder $query, ?float $min, ?float $max): Builder
     {
         if ($min !== null) {

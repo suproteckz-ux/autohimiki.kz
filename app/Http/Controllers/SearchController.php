@@ -54,7 +54,8 @@ class SearchController extends Controller
                 ->orderByRaw(
                     'MATCH(name, sku, short_description) AGAINST(? IN BOOLEAN MODE) DESC',
                     ["+{$escaped}*"]
-                );
+                )
+                ->orderByStorefrontPriority();
         } else {
             // Fallback на LIKE для коротких запросов или если FULLTEXT недоступен
             $dbQuery
@@ -63,6 +64,7 @@ class SearchController extends Controller
                       ->orWhere('sku', 'like', "%{$query}%")
                       ->orWhere('short_description', 'like', "%{$query}%");
                 })
+                ->orderByStorefrontPriority()
                 ->orderByDesc('is_hit')
                 ->orderByDesc('views');
         }
