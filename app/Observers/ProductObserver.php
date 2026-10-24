@@ -75,11 +75,22 @@ class ProductObserver
 
     public function saved(Product $product): void
     {
-        DB::afterCommit(fn () => ProductUrlMigration::invalidate());
+        DB::afterCommit(function () use ($product) {
+            ProductUrlMigration::invalidate();
+            // Refresh homepage collections when stock, availability, or images change
+            if ($product->wasRecentlyCreated
+                || $product->wasChanged(['quantity', 'in_stock', 'is_active', 'is_hit', 'is_new', 'main_image', 'main_image_webp'])
+            ) {
+                \App\Services\CacheService::forgetProductContent();
+            }
+        });
     }
 
     public function deleted(Product $product): void
     {
-        DB::afterCommit(fn () => ProductUrlMigration::invalidate());
+        DB::afterCommit(function () {
+            ProductUrlMigration::invalidate();
+            \App\Services\CacheService::forgetProductContent();
+        });
     }
 }

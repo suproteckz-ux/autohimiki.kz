@@ -86,7 +86,7 @@ class CacheService
                 ->get([
                     'id', 'name', 'slug', 'price', 'old_price',
                     'main_image', 'main_image_webp', 'main_image_alt',
-                    'in_stock', 'is_new', 'is_hit', 'brand_id', 'category_id',
+                    'in_stock', 'quantity', 'is_new', 'is_hit', 'brand_id', 'category_id',
                 ])
         );
     }
@@ -96,14 +96,23 @@ class CacheService
         return Cache::remember(
             self::KEY_HOMEPAGE_NEW,
             self::TTL_HOMEPAGE,
-            fn () => \App\Models\Product::new()
+            fn () => \App\Models\Product::active()
+                ->where('quantity', '>', 0)
+                ->where(function ($q) {
+                    // Has main image OR at least one gallery image
+                    $q->where(function ($inner) {
+                        $inner->whereNotNull('main_image')->where('main_image', '<>', '');
+                    })->orWhereExists(fn ($sub) => $sub->from('product_images')
+                        ->whereColumn('product_id', 'products.id'));
+                })
                 ->with(['brand:id,name,slug', 'category:id,name,slug'])
-                ->latest()
+                ->orderByDesc('created_at')
+                ->orderByDesc('id')
                 ->limit(8)
                 ->get([
                     'id', 'name', 'slug', 'price', 'old_price',
                     'main_image', 'main_image_webp', 'main_image_alt',
-                    'in_stock', 'is_new', 'is_hit', 'brand_id', 'category_id',
+                    'in_stock', 'quantity', 'is_new', 'is_hit', 'brand_id', 'category_id',
                 ])
         );
     }
